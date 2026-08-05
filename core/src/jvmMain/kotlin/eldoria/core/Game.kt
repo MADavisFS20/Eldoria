@@ -4,6 +4,7 @@ import eldoria.core.data.BiomeContentRegistry
 import eldoria.core.data.CraftingMaterialContentRegistry
 import eldoria.core.data.DialogueContentRegistry
 import eldoria.core.data.FamilyContentRegistry
+import eldoria.core.data.HomeRegionContent
 import eldoria.core.data.SkillTrainerContentRegistry
 import eldoria.core.game.AnsiText
 import eldoria.core.game.CharacterPanel
@@ -249,7 +250,7 @@ private fun describeLocation(session: GameSession) {
     val items = session.currentItems()
     if (items.isNotEmpty()) {
         say("Items here:")
-        for (it in items) say("  - ${AnsiText.yellow(it.name)}")
+        for (it in items) say("  - ${AnsiText.yellow(it.value.name)}")
     }
 
     session.player.companion?.let { say(AnsiText.cyan("${it.name} is at your side.")) }
@@ -358,6 +359,151 @@ private val COMPANION_LINES = listOf(
     "\"Don't go getting yourself killed. I'd have to explain that back home.\"",
 )
 
+private fun askYesNo(text: String): Boolean = prompt("$text (yes/no)").lowercase().startsWith("y")
+
+/**
+ * The Python prototype's 6 named home-region NPCs (see
+ * data/HomeRegionContent.kt) get their exact original dialogue trees
+ * ported here rather than fit into SpawnEntry.offersSideQuest, which is
+ * one-quest-per-NPC (these NPCs give up to three). Returns true if this
+ * being was a home-region NPC and the dialogue was handled -- talk()
+ * falls through to the normal archetype/trainer/etc. chain otherwise.
+ */
+private fun handleHomeRegionNpc(session: GameSession, being: SpawnEntry): Boolean {
+    fun offerQuest(id: String, hookLine: String) {
+        say(AnsiText.blue("\"$hookLine\""))
+        if (askYesNo("Accept quest '${HomeRegionContent.questTitles.getValue(id)}'?")) {
+            session.activeHomeRegionQuests.add(id)
+            say(AnsiText.bold("[QUEST ACCEPTED]: ${HomeRegionContent.questTitles.getValue(id)}"))
+        }
+    }
+
+    fun completeQuest(id: String, xp: Int, gold: Int, line: String) {
+        session.activeHomeRegionQuests.remove(id)
+        session.completedSideQuests.add(id)
+        session.player = LevelProgression.applyExperience(session.player.copy(gold = session.player.gold + gold), xp, session.rng)
+        say(AnsiText.blue("\"$line\""))
+        say(AnsiText.bold("[QUEST COMPLETE]: ${HomeRegionContent.questTitles.getValue(id)} (+$xp XP, +${gold}g)"))
+    }
+
+    /** Consumes `count` copies of a named item from inventory, or returns false (and takes nothing) if there aren't enough. */
+    fun consumeItems(name: String, count: Int): Boolean {
+        val matching = session.player.inventory.filter { it.name == name }
+        if (matching.size < count) return false
+        session.player = session.player.copy(inventory = session.player.inventory - matching.take(count).toSet())
+        return true
+    }
+
+    when (being.name) {
+        HomeRegionContent.ELDER_THERON -> {
+            say(AnsiText.blue("You approach ${being.name}."))
+            val relic = HomeRegionContent.QUEST_ANCIENT_RELIC
+            when {
+                relic in session.completedSideQuests -> {}
+                relic in session.activeHomeRegionQuests ->
+                    if (consumeItems(HomeRegionContent.ITEM_ANCIENT_RELIC, 1))
+                        completeQuest(relic, 150, 100, "You have returned the relic! Oakhaven is safer thanks to you, hero.")
+                    else say(AnsiText.blue("\"Have you found the ancient relic yet? The village depends on it.\""))
+                else -> offerQuest(relic, "The Whispering Woods hide an ancient relic, vital to our village's protection. Will you seek it out?")
+            }
+            val poison = HomeRegionContent.QUEST_POISONED_WATERS
+            when {
+                poison in session.completedSideQuests -> {}
+                poison in session.activeHomeRegionQuests ->
+                    if (consumeItems(HomeRegionContent.ITEM_SWAMP_HERB, HomeRegionContent.SWAMP_HERB_REQUIRED))
+                        completeQuest(poison, 180, 120, "Excellent! These herbs will surely help. Thank you, adventurer.")
+                    else say(AnsiText.blue("\"The waters still run foul. Have you found enough Swamp Herbs yet?\""))
+                else -> offerQuest(poison, "Our water supply from the swamps has become tainted. If you could gather ${HomeRegionContent.SWAMP_HERB_REQUIRED} Swamp Herbs, it might help purify it.")
+            }
+            val goblins = HomeRegionContent.QUEST_GOBLIN_OUTBREAK
+            val goblinsSlain = session.questCounters["Goblin Scavenger"] ?: 0
+            when {
+                goblins in session.completedSideQuests -> {}
+                goblins in session.activeHomeRegionQuests ->
+                    if (goblinsSlain >= HomeRegionContent.GOBLINS_REQUIRED)
+                        completeQuest(goblins, 120, 80, "The roads are safer already. You have our thanks, goblin-slayer.")
+                    else say(AnsiText.blue("\"The goblins still prowl. ${HomeRegionContent.GOBLINS_REQUIRED - goblinsSlain} more must fall.\""))
+                else -> offerQuest(goblins, "Goblins have been raiding the roads and woods. Cull at least ${HomeRegionContent.GOBLINS_REQUIRED} of them and Oakhaven will reward you.")
+            }
+            return true
+        }
+        HomeRegionContent.FISHERMAN_FINN -> {
+            say(AnsiText.blue("You approach ${being.name}."))
+            val cargo = HomeRegionContent.QUEST_LOST_CARGO
+            when {
+                cargo in session.completedSideQuests -> say(AnsiText.blue("\"Bless yer soul, still keeping the coast safe, are ye?\""))
+                cargo in session.activeHomeRegionQuests ->
+                    if (consumeItems(HomeRegionContent.ITEM_SHIP_MANIFEST, 1))
+                        completeQuest(cargo, 250, 150, "Bless yer soul! Me manifest! Now I can sort out this mess. Here's a little something for yer trouble.")
+                    else say(AnsiText.blue("\"Any luck with me manifest, eh? It's down in that sunken wreck, I reckon.\""))
+                else -> offerQuest(cargo, "Me cargo, lost in the shipwreck! If ye could find me manifest, I'd be mighty grateful.")
+            }
+            return true
+        }
+        HomeRegionContent.MOUNTAIN_GUIDE -> {
+            say(AnsiText.blue("You approach ${being.name}."))
+            val rescue = HomeRegionContent.QUEST_MOUNTAIN_RESCUE
+            when {
+                rescue in session.completedSideQuests -> {}
+                rescue in session.activeHomeRegionQuests ->
+                    if (consumeItems(HomeRegionContent.ITEM_LOST_MINER_NOTE, 1))
+                        completeQuest(rescue, 300, 200, "A note from poor old Borin... at least we know what happened. Thank you for bringing closure.")
+                    else say(AnsiText.blue("\"Still no sign of the lost miner? Be careful up there, it's treacherous.\""))
+                else -> offerQuest(rescue, "A miner went missing in the northern pass. If you find him, or at least a note from him, I'd pay handsomely.")
+            }
+            val dragon = HomeRegionContent.QUEST_SLAY_THE_WYRM
+            when {
+                dragon in session.completedSideQuests -> {}
+                dragon in session.activeHomeRegionQuests -> say(AnsiText.blue("\"The wyrm still lives -- I can see its smoke from here. Take the pass up to the peak, and gods be with you.\""))
+                else -> offerQuest(dragon, "An ancient dragon slumbers atop Dragon's Peak. Slay it, and your name will be sung for generations. Few return from that summit...")
+            }
+            return true
+        }
+        HomeRegionContent.ARCANE_VENDOR -> {
+            say(AnsiText.blue("You approach ${being.name}."))
+            val fungi = HomeRegionContent.QUEST_ALCHEMICAL_FUNGI
+            when {
+                fungi in session.completedSideQuests -> say(AnsiText.blue("\"Our transaction was complete. Was there something else?\""))
+                fungi in session.activeHomeRegionQuests ->
+                    if (consumeItems(HomeRegionContent.ITEM_GLOWING_MUSHROOM, HomeRegionContent.GLOWING_MUSHROOM_REQUIRED))
+                        completeQuest(fungi, 100, 60, "Ahh, they still glow with cave-light. Perfect. Our transaction is complete.")
+                    else say(AnsiText.blue("\"No mushrooms yet? The Shadow Caves lie west of here.\""))
+                else -> offerQuest(fungi, "I require reagents... Glowing Mushrooms from the Shadow Caves. Bring me ${HomeRegionContent.GLOWING_MUSHROOM_REQUIRED} and I shall make it worth your while.")
+            }
+            return true
+        }
+        HomeRegionContent.ANCIENT_SCHOLAR -> {
+            say(AnsiText.blue("You approach ${being.name}."))
+            val compass = HomeRegionContent.QUEST_ANCIENT_COMPASS
+            when {
+                compass in session.completedSideQuests -> {}
+                compass in session.activeHomeRegionQuests ->
+                    if (consumeItems(HomeRegionContent.ITEM_ANCIENT_COMPASS, 1))
+                        completeQuest(compass, 400, 300, "Incredible! The Ancient Compass! Its magic is palpable. You have done a great service!")
+                    else say(AnsiText.blue("\"The compass... it must be here somewhere. Keep searching the crypts.\""))
+                else -> offerQuest(compass, "The legends speak of an Ancient Compass, hidden deep within these ruins. It holds immense power. Will you brave the dangers to find it?")
+            }
+            return true
+        }
+        HomeRegionContent.LOST_MINER -> {
+            say(AnsiText.blue("You approach ${being.name}."))
+            val rescue = HomeRegionContent.QUEST_MOUNTAIN_RESCUE
+            if (rescue in session.activeHomeRegionQuests && rescue !in session.completedSideQuests) {
+                say(AnsiText.blue("\"Oh, thank the heavens! I'm trapped! I dropped my note somewhere nearby, please take it to the guide in the south!\""))
+                if (session.player.inventory.none { it.name == HomeRegionContent.ITEM_LOST_MINER_NOTE }) {
+                    val note = Item(name = HomeRegionContent.ITEM_LOST_MINER_NOTE, kind = ItemKind.QUEST_ITEM, tier = 1, value = 0, maxDurability = 1)
+                    session.player = session.player.copy(inventory = session.player.inventory + note)
+                    say(AnsiText.yellow("You received the ${HomeRegionContent.ITEM_LOST_MINER_NOTE}."))
+                }
+            } else {
+                say(AnsiText.blue("\"Just need to rest a bit... then I'll try to find my way out.\""))
+            }
+            return true
+        }
+        else -> return false
+    }
+}
+
 private fun talk(session: GameSession, arg: String) {
     val companion = session.player.companion
     if (companion != null && arg.isNotBlank() && arg.lowercase() in companion.name.lowercase()) {
@@ -373,6 +519,7 @@ private fun talk(session: GameSession, arg: String) {
         }
         return
     }
+    if (handleHomeRegionNpc(session, being)) return
     if (being.isFamilyMember) {
         if (MAIN_QUEST_ID in session.completedQuests) {
             say(AnsiText.blue("\"Every day you're still here is a good day,\" they say, smiling."))
@@ -735,6 +882,15 @@ private fun attack(session: GameSession, arg: String) {
     if (targetHp <= 0) {
         say(AnsiText.bold("You have defeated ${target.name}!"))
         session.markDefeated(index, target.name)
+        session.incrementQuestCounter(target.name)
+        if (target.name == "Ancient Flame Dragon" && HomeRegionContent.QUEST_SLAY_THE_WYRM in session.activeHomeRegionQuests) {
+            session.activeHomeRegionQuests.remove(HomeRegionContent.QUEST_SLAY_THE_WYRM)
+            session.completedSideQuests.add(HomeRegionContent.QUEST_SLAY_THE_WYRM)
+            val trophy = Item(name = "Dragon Scale Trophy", kind = ItemKind.TRINKET, tier = 5, value = 750, maxDurability = 1, isLegendary = true)
+            session.player = session.player.copy(inventory = session.player.inventory + trophy, gold = session.player.gold + 1000)
+            session.player = LevelProgression.applyExperience(session.player, 1000, session.rng)
+            say(AnsiText.bold("[QUEST COMPLETE]: Slay the Wyrm (+1000 XP, +1000g, Dragon Scale Trophy)"))
+        }
         val xp = LevelProgression.xpForDefeating(tier, session.rng)
         val before = session.player.level
         session.player = LevelProgression.applyExperience(session.player, xp, session.rng)
@@ -761,9 +917,10 @@ private fun attack(session: GameSession, arg: String) {
 }
 
 private fun take(session: GameSession, arg: String) {
-    val item = session.currentItems().firstOrNull { it.name.lowercase().contains(arg.lowercase()) }
-    if (item == null) { say("You don't see that here."); return }
-    session.markTaken(item.name)
+    val indexed = session.currentItems().firstOrNull { it.value.name.lowercase().contains(arg.lowercase()) }
+    if (indexed == null) { say("You don't see that here."); return }
+    val item = indexed.value
+    session.markTaken(indexed.index)
 
     val artifact = ArtifactKind.entries.firstOrNull { it.itemName == item.name }
     if (artifact != null) {
@@ -981,7 +1138,14 @@ private fun sell(session: GameSession, arg: String) {
     val idx = arg.toIntOrNull()
     if (idx == null || idx !in 1..session.player.inventory.size) { say("sell <#> -- check 'inventory' for numbers."); return }
     val item = session.player.inventory[idx - 1]
-    if (item == session.player.equippedWeapon || item == session.player.equippedArmor) { say("You can't sell what you have equipped."); return }
+    val p = session.player
+    // Defensive: equip() already removes an item from inventory the moment
+    // it's equipped, so this shouldn't normally trigger, but was missed for
+    // all 4 of Phase 1's new slots (only weapon/armor were checked) --
+    // covering all six here rather than trusting that invariant elsewhere.
+    if (item == p.equippedWeapon || item == p.equippedArmor || item == p.equippedOffhand || item == p.equippedHead || item == p.equippedRing || item == p.equippedAmulet) {
+        say("You can't sell what you have equipped."); return
+    }
     val price = ShopGenerator.sellBackPrice(item, sellBonusPercent(session.player))
     session.player = session.player.copy(gold = session.player.gold + price, inventory = session.player.inventory - item)
     say(AnsiText.yellow("You sell the ${item.name} for ${price}g."))
@@ -1047,6 +1211,14 @@ private fun printJournal(session: GameSession) {
         say("  ${AnsiText.green("[complete]")} Confront the Nobles: the throne has answered for what it did to your family.")
     } else if (session.finalBattleUnlocked) {
         say("  ${AnsiText.yellow("[active]")} Confront the Nobles: your family is safe and waiting. Type 'confront' when ready.")
+    }
+    val homeQuests = HomeRegionContent.questTitles.keys.filter { it in session.activeHomeRegionQuests || it in session.completedSideQuests }
+    if (homeQuests.isNotEmpty()) {
+        say(AnsiText.bold("Home region quests:"))
+        for (id in homeQuests) {
+            val status = if (id in session.completedSideQuests) AnsiText.green("[complete]") else AnsiText.yellow("[active]")
+            say("  $status ${HomeRegionContent.questTitles.getValue(id)}")
+        }
     }
     if (session.discoveredQuests.isEmpty()) { say("No dungeon/sky-realm quests discovered yet -- find a portal and 'enter' it."); return }
     for (id in session.discoveredQuests) {

@@ -51,7 +51,7 @@ class GameSession(
     /** spotKey -> tick the player most recently departed it (overworld: left the tile; sub-realm: exited the whole realm). */
     private val departedAt: MutableMap<String, Int> = mutableMapOf()
 
-    private val takenItems: MutableMap<String, MutableSet<String>> = mutableMapOf()
+    private val takenItems: MutableMap<String, MutableSet<Int>> = mutableMapOf()
 
     val discoveredQuests: MutableSet<String> = mutableSetOf()
     val completedQuests: MutableSet<String> = mutableSetOf()
@@ -59,6 +59,31 @@ class GameSession(
 
     /** Side quests (model/SideQuest.kt) resolved so far, by SideQuestKind.name -- each can only be resolved once. */
     val completedSideQuests: MutableSet<String> = mutableSetOf()
+
+    /**
+     * The home region's bespoke quests (see data/HomeRegionContent.kt),
+     * by a plain string id -- accepted but not yet turned in. NOT the same
+     * as `discoveredQuests`, which is exclusively sub-realm ids (see
+     * Game.kt's printJournal doing `world.subRealms.getValue(id)` on every
+     * entry -- mixing home-region ids into that set would throw). On
+     * completion, an id moves out of here into `completedSideQuests`
+     * (reused as a generic completion marker; it's just a String set).
+     */
+    val activeHomeRegionQuests: MutableSet<String> = mutableSetOf()
+
+    /**
+     * Generic named counters for kill-N-of-X style quest tracking (e.g. the
+     * home region's "cull 3 goblins" quest, see data/HomeRegionContent.kt) --
+     * keyed by whatever the quest logic chooses (typically a being name).
+     * Nothing in the engine increments these automatically except Game.kt's
+     * `attack()` bumping the defeated being's own name on every kill; quest
+     * code reads whichever key it cares about.
+     */
+    val questCounters: MutableMap<String, Int> = mutableMapOf()
+
+    fun incrementQuestCounter(key: String) {
+        questCounters[key] = (questCounters[key] ?: 0) + 1
+    }
 
     /** Set once every sub-realm quest + the main family quest are complete -- see Game.kt's checkEndgameTrigger. */
     var finalBattleUnlocked: Boolean = false
@@ -105,10 +130,20 @@ class GameSession(
         return all.withIndex().filter { (i, _) -> isRespawnEligible(spot, i) }
     }
 
-    fun currentItems(): List<Item> {
+    /**
+     * Un-taken ground items at the current spot, indexed exactly like the
+     * static list -- same "index is the stable identity" pattern as
+     * currentBeings(). Was previously filtered by NAME (a Set<String> of
+     * taken item names), which silently broke any location with more than
+     * one ground item sharing a name (e.g. three separate "Swamp Herb"
+     * pickups, see data/HomeRegionContent.kt): taking one hid ALL of them,
+     * since the filter couldn't distinguish the instances. Index-based
+     * tracking fixes that -- each physical item is tracked individually.
+     */
+    fun currentItems(): List<IndexedValue<Item>> {
         val itemsHere = currentRoom()?.items ?: currentLocation.items
         val gone = takenItems[spotKey()].orEmpty()
-        return itemsHere.filterNot { it.name in gone }
+        return itemsHere.withIndex().filterNot { (i, _) -> i in gone }
     }
 
     fun markDefeated(beingIndex: Int, beingName: String) {
@@ -120,8 +155,8 @@ class GameSession(
         bestiary.add(beingName)
     }
 
-    fun markTaken(itemName: String) {
-        takenItems.getOrPut(spotKey()) { mutableSetOf() }.add(itemName)
+    fun markTaken(itemIndex: Int) {
+        takenItems.getOrPut(spotKey()) { mutableSetOf() }.add(itemIndex)
     }
 
     fun discover(id: String) {
@@ -147,13 +182,15 @@ class GameSession(
         val discoveredLocations: Set<String>,
         val defeatedAt: Map<String, Map<Int, Int>>,
         val departedAt: Map<String, Int>,
-        val takenItems: Map<String, Set<String>>,
+        val takenItems: Map<String, Set<Int>>,
         val discoveredQuests: Set<String>,
         val completedQuests: Set<String>,
         val bestiary: Set<String>,
         val finalBattleUnlocked: Boolean,
         val finalBattleWon: Boolean,
         val completedSideQuests: Set<String>,
+        val questCounters: Map<String, Int> = emptyMap(),
+        val activeHomeRegionQuests: Set<String> = emptySet(),
     )
 
     fun snapshot(): Snapshot = Snapshot(
@@ -174,6 +211,8 @@ class GameSession(
         finalBattleUnlocked = finalBattleUnlocked,
         finalBattleWon = finalBattleWon,
         completedSideQuests = completedSideQuests.toSet(),
+        questCounters = questCounters.toMap(),
+        activeHomeRegionQuests = activeHomeRegionQuests.toSet(),
     )
 
     /** Restores every field in place from a snapshot taken against this same World (seed must match). */
@@ -193,5 +232,7 @@ class GameSession(
         finalBattleUnlocked = snap.finalBattleUnlocked
         finalBattleWon = snap.finalBattleWon
         completedSideQuests.clear(); completedSideQuests.addAll(snap.completedSideQuests)
+        questCounters.clear(); questCounters.putAll(snap.questCounters)
+        activeHomeRegionQuests.clear(); activeHomeRegionQuests.addAll(snap.activeHomeRegionQuests)
     }
 }

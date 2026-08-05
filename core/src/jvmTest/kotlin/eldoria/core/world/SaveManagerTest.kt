@@ -76,7 +76,7 @@ class SaveManagerTest {
             // kotlinx.serialization's structured-map-key JSON support.
             defeatedAt = mapOf("loc-2" to mapOf(0 to 5, 3 to 12)),
             departedAt = mapOf("loc-1" to 40),
-            takenItems = mapOf("loc-2" to setOf("Rusty Key")),
+            takenItems = mapOf("loc-2" to setOf(0)),
             discoveredQuests = setOf("quest-a"),
             completedQuests = setOf("quest-a"),
             bestiary = setOf("Goblin Scavenger", "Dire Wolf"),

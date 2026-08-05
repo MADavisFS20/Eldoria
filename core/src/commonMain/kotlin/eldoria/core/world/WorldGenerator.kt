@@ -3,6 +3,7 @@ package eldoria.core.world
 import eldoria.core.data.BiomeContentRegistry
 import eldoria.core.data.DungeonContentRegistry
 import eldoria.core.data.FamilyContentRegistry
+import eldoria.core.data.HomeRegionContent
 import eldoria.core.data.SkillTrainerContentRegistry
 import eldoria.core.data.SkyContentRegistry
 import eldoria.core.data.TrainerTemplate
@@ -560,6 +561,16 @@ object WorldGenerator {
                 )
             }
         }
+
+        // Splice the Python prototype's tested 15-location home region onto
+        // whichever tile Game.kt's own start-city selection will land on --
+        // same filter/tie-break rule duplicated here (rather than passed
+        // in) so this stays correct even if Game.kt's own start-location
+        // logic is ever read before this returns. See data/HomeRegionContent's doc.
+        val homeAnchor = locations.values
+            .filter { it.biome == Biome.PLAINS && it.populationTier == PopulationTier.CITY }
+            .minByOrNull { it.id } ?: locations.values.first { it.populationTier == PopulationTier.CITY }
+        HomeRegionContent.graft(locations, homeAnchor.x, homeAnchor.y)
 
         return World(config.width, config.height, config.seed, locations, allSubRealms)
     }
