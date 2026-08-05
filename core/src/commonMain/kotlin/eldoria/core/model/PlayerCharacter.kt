@@ -35,14 +35,21 @@ data class PlayerCharacter(
     val gold: Int,
     val inventory: List<Item> = emptyList(),
     val equippedWeapon: Item? = null,
+    /** Chest slot (ItemKind.ARMOR). */
     val equippedArmor: Item? = null,
+    /** Shield/off-hand slot -- ItemKind.OFFHAND. Merged in from the Python prototype's 6-slot equipment model (weapon/offhand/chest/head/ring/amulet), which Kotlin core originally didn't have at all. */
+    val equippedOffhand: Item? = null,
+    val equippedHead: Item? = null,
+    val equippedRing: Item? = null,
+    val equippedAmulet: Item? = null,
     /** A purchased boat, if any (kind=BOAT) -- wears down from sailing/combat, can be repaired or lost entirely. */
     val ownedBoat: Item? = null,
     /** Stackable crafting reagents (see data/CraftingMaterialContent.kt) -- material name -> count. */
     val materials: Map<String, Int> = emptyMap(),
     /** -100 (reviled) .. 100 (renowned). Shifts from combat outcomes and quest completion. */
     val reputation: Int = 0,
-    val perks: Set<Perk> = emptySet(),
+    /** Perk -> stack count. A Map rather than a Set so perks can be picked more than once -- merged in from the Python prototype, where every perk was stackable. See model/Perk.kt's doc. */
+    val perks: Map<Perk, Int> = emptyMap(),
     /** Perk picks earned but not yet spent -- one banked every 5 character levels. */
     val pendingPerkChoices: Int = 0,
     /** Set once per rest by SECOND_WIND; consumed the next time it saves the player from a killing blow. */
@@ -64,6 +71,28 @@ data class PlayerCharacter(
     val isExhausted: Boolean get() = currentStamina <= 0
     fun skillLevel(type: SkillType): Int = skills[type]?.level ?: 0
     fun knowsSkill(type: SkillType): Boolean = skills.containsKey(type)
+    fun perkRank(perk: Perk): Int = perks[perk] ?: 0
+
+    /** Which of the 6 equip slots currently holds what, keyed by the ItemKind that slot accepts. Non-equippable kinds (QUEST_ITEM, TRINKET, MATERIAL, BOAT) return null. */
+    fun equippedInSlot(kind: ItemKind): Item? = when (kind) {
+        ItemKind.WEAPON -> equippedWeapon
+        ItemKind.ARMOR -> equippedArmor
+        ItemKind.OFFHAND -> equippedOffhand
+        ItemKind.HEAD -> equippedHead
+        ItemKind.RING -> equippedRing
+        ItemKind.AMULET -> equippedAmulet
+        else -> null
+    }
+
+    fun withEquippedInSlot(kind: ItemKind, item: Item?): PlayerCharacter = when (kind) {
+        ItemKind.WEAPON -> copy(equippedWeapon = item)
+        ItemKind.ARMOR -> copy(equippedArmor = item)
+        ItemKind.OFFHAND -> copy(equippedOffhand = item)
+        ItemKind.HEAD -> copy(equippedHead = item)
+        ItemKind.RING -> copy(equippedRing = item)
+        ItemKind.AMULET -> copy(equippedAmulet = item)
+        else -> this
+    }
 
     val reputationTitle: String get() = when {
         reputation <= -60 -> "Reviled"

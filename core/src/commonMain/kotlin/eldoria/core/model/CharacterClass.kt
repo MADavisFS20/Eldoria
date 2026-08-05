@@ -4,7 +4,7 @@ package eldoria.core.model
 data class StartingGear(val weaponName: String, val armorName: String)
 
 /**
- * The six playable archetypes. `primarySkills` start higher and gain xp
+ * The seven playable archetypes. `primarySkills` start higher and gain xp
  * faster from use (see SkillProgression). `freeSignatureSkill`, when set, is
  * a single trainer-locked skill this class already knows a little of at
  * creation (a mage's first cantrip, a cleric's first prayer) -- every other
@@ -58,5 +58,13 @@ enum class CharacterClass(
         setOf(SkillType.ONE_HANDED, SkillType.HEAVY_ARMOR, SkillType.BLOCK, SkillType.RESTORATION),
         freeSignatureSkill = SkillType.RESTORATION,
         StartingGear("Blessed Longsword", "Chainmail Armor"),
+    ),
+    /** Ported from the Python prototype's fifth class. No dedicated Necromancy skill exists yet, so life-drain/dark-rite flavor is expressed through Conjuration (raising/binding) and Destruction (dark damage) instead of inventing a new SkillType for one class. */
+    NECROMANCER(
+        "Necromancer",
+        "A dark practitioner who trades in life drain, venomous curses, and forbidden rites.",
+        setOf(SkillType.CONJURATION, SkillType.DESTRUCTION, SkillType.ALTERATION),
+        freeSignatureSkill = SkillType.CONJURATION,
+        StartingGear("Bone-Inlaid Staff", "Tattered Death Shroud"),
     ),
 }

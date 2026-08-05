@@ -42,7 +42,7 @@ class SaveManagerTest {
             .copy(
                 gold = 777,
                 level = 3,
-                perks = setOf(Perk.TOUGHNESS, Perk.IRON_SKIN),
+                perks = mapOf(Perk.TOUGHNESS to 1, Perk.IRON_SKIN to 3),
                 subclass = Subclass.VAMPIRE,
                 companion = HiredCompanion(
                     name = "Loyal Retainer",

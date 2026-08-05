@@ -35,7 +35,7 @@ object PlayerCharacterFactory {
 
         val maxHealth = DiceFormula(2, DieType.D8, strMod * 2).roll(rng).coerceAtLeast(10)
         val maxStamina = DiceFormula(2, DieType.D8, agiMod * 2).roll(rng).coerceAtLeast(10)
-        val armorClass = 10 + agiMod
+        val baseArmorClass = 10 + agiMod
         val speed = (20 + agiMod * 2 + DiceFormula(1, DieType.D6).roll(rng)).coerceAtLeast(5)
         val attackBonus = strMod
         val unarmedDamage = DiceFormula(1, DieType.D6, strMod)
@@ -56,6 +56,12 @@ object PlayerCharacterFactory {
 
         val weapon = StatGenerator.weaponItem(characterClass.startingGear.weaponName, tier = 1, rng = rng)
         val armor = StatGenerator.armorItem(characterClass.startingGear.armorName, tier = 1, rng = rng)
+        // Starting gear is equipped directly (bypassing Game.kt's equip(),
+        // which normally bakes an item's bonus into the player's stats on
+        // equip) -- so its armorClassBonus has to be folded in here too, or
+        // new characters would start with armor that mechanically does
+        // nothing until the player manually re-equips it.
+        val armorClass = baseArmorClass + (armor.armorClassBonus ?: 0)
 
         return PlayerCharacter(
             name = name,

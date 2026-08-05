@@ -1,6 +1,7 @@
 package eldoria.core.world
 
 import eldoria.core.model.Item
+import eldoria.core.model.ItemKind
 import kotlin.random.Random
 
 /**
@@ -17,15 +18,27 @@ object ShopGenerator {
     private val ARMOR_NAMES = listOf(
         "Traveler's Vest", "Reinforced Buckler", "Padded Jerkin", "Riveted Cuirass", "Simple Hood", "Worn Chainmail",
     )
+    private val OFFHAND_NAMES = listOf("Worn Buckler", "Iron Targe", "Reinforced Kite Shield")
+    private val HEAD_NAMES = listOf("Leather Cap", "Iron Skullcap", "Traveler's Hood")
+    private val RING_NAMES = listOf("Simple Band", "Engraved Signet Ring", "Weathered Ring")
+    private val AMULET_NAMES = listOf("Plain Pendant", "Carved Bone Amulet", "Silver Locket")
 
     fun inventoryFor(traderName: String, locationId: String, tier: Int, worldSeed: Long): List<Item> {
         val rng = DeterministicRandom.random(worldSeed, traderName.hashCode().toLong(), locationId.hashCode().toLong(), 555L)
         val count = rng.nextInt(3, 6)
         return List(count) {
-            if (rng.nextBoolean())
-                StatGenerator.weaponItem(WEAPON_NAMES.random(rng), tier, rng)
-            else
-                StatGenerator.armorItem(ARMOR_NAMES.random(rng), tier, rng)
+            when (rng.nextInt(6)) {
+                0, 1 -> StatGenerator.weaponItem(WEAPON_NAMES.random(rng), tier, rng)
+                2, 3 -> StatGenerator.armorItem(ARMOR_NAMES.random(rng), tier, rng)
+                4 -> if (rng.nextBoolean())
+                    StatGenerator.armorItem(OFFHAND_NAMES.random(rng), tier, rng, slot = ItemKind.OFFHAND)
+                else
+                    StatGenerator.armorItem(HEAD_NAMES.random(rng), tier, rng, slot = ItemKind.HEAD)
+                else -> if (rng.nextBoolean())
+                    StatGenerator.accessoryItem(RING_NAMES.random(rng), tier, rng, slot = ItemKind.RING)
+                else
+                    StatGenerator.accessoryItem(AMULET_NAMES.random(rng), tier, rng, slot = ItemKind.AMULET)
+            }
         }
     }
 

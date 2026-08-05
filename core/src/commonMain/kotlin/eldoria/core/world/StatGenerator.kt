@@ -6,6 +6,7 @@ import eldoria.core.model.Item
 import eldoria.core.model.ItemKind
 import eldoria.core.model.MagicEffect
 import eldoria.core.model.StatBlock
+import eldoria.core.model.StatusEffect
 import kotlin.random.Random
 
 /**
@@ -119,6 +120,18 @@ object StatGenerator {
         return if (legendary) base * 3 else base
     }
 
+    /**
+     * Legendary weapons always carry a status-on-hit (see model/StatusEffect.kt)
+     * alongside their magicEffect -- ported from the Python prototype, where
+     * status effects came from spells rather than gear, but Kotlin core has
+     * no spellcasting action to hook them to yet (Phase 2 territory). Gating
+     * this to legendary tier keeps it rare/special rather than a mundane
+     * per-swing roll, and makes the ENCHANTING craft recipe (which always
+     * produces a legendary weapon, see Game.kt's `craft`) the natural way
+     * to reach it in play.
+     */
+    private fun rollStatusEffect(rng: Random): StatusEffect = StatusEffect.entries.random(rng)
+
     fun weaponItem(name: String, tier: Int, rng: Random, legendary: Boolean = false): Item {
         val t = tier.coerceIn(1, 5)
         val diceCount = if (t == 5) 2 else 1
@@ -132,18 +145,49 @@ object StatGenerator {
             value = rollValue(t, legendary, rng),
             maxDurability = rollDurability(t, legendary, rng),
             isLegendary = legendary,
+            inflictsStatus = if (legendary) rollStatusEffect(rng) else null,
         )
     }
 
-    fun armorItem(name: String, tier: Int, rng: Random, legendary: Boolean = false): Item {
+    /** slot must be a physical-armor ItemKind: ARMOR (chest), OFFHAND, or HEAD -- each contributes armorClassBonus like the original ARMOR-only version did. */
+    fun armorItem(name: String, tier: Int, rng: Random, legendary: Boolean = false, slot: ItemKind = ItemKind.ARMOR): Item {
+        require(slot == ItemKind.ARMOR || slot == ItemKind.OFFHAND || slot == ItemKind.HEAD) { "armorItem slot must be ARMOR, OFFHAND, or HEAD, got $slot" }
         val t = tier.coerceIn(1, 5)
-        val bonus = (t + 1) / 2 + (if (legendary) 1 else 0)
+        // Offhand (shield) and head pieces are lighter than a full chest
+        // piece -- half the AC bonus, floor 1, same "bigger tier = bigger
+        // number" dice-scaled shape as everything else here.
+        val chestBonus = (t + 1) / 2 + (if (legendary) 1 else 0)
+        val bonus = if (slot == ItemKind.ARMOR) chestBonus else (chestBonus / 2).coerceAtLeast(1)
         return Item(
             name = name,
-            kind = ItemKind.ARMOR,
+            kind = slot,
             tier = t,
             armorClassBonus = bonus,
             magicEffect = if (legendary) rollMagicEffect(rng) else null,
+            value = rollValue(t, legendary, rng),
+            maxDurability = rollDurability(t, legendary, rng),
+            isLegendary = legendary,
+        )
+    }
+
+    /**
+     * RING or AMULET -- these don't get armorClassBonus like the physical
+     * slots; their whole bonus lives in magicEffect (see Item.kt's doc),
+     * reusing the same buff/curse roll legendary gear already has instead
+     * of adding parallel hp/mp/atk/def bonus fields. Always rolls a
+     * BENEFICIAL effect (unlike rollMagicEffect's 50/50), since this is a
+     * purchasable/lootable accessory, not a hostile curse-on-touch.
+     */
+    fun accessoryItem(name: String, tier: Int, rng: Random, slot: ItemKind, legendary: Boolean = false): Item {
+        require(slot == ItemKind.RING || slot == ItemKind.AMULET) { "accessoryItem slot must be RING or AMULET, got $slot" }
+        val t = tier.coerceIn(1, 5)
+        var effect = rollMagicEffect(rng)
+        while (!effect.beneficial) effect = rollMagicEffect(rng)
+        return Item(
+            name = name,
+            kind = slot,
+            tier = t,
+            magicEffect = effect,
             value = rollValue(t, legendary, rng),
             maxDurability = rollDurability(t, legendary, rng),
             isLegendary = legendary,
@@ -173,8 +217,9 @@ object StatGenerator {
  * natural 1 always misses.
  */
 object CombatMath {
-    data class AttackRoll(val naturalD20: Int, val total: Int) {
-        val isCritical: Boolean get() = naturalD20 == 20
+    /** critThreshold defaults to the vanilla "natural 20 only" rule; lower it (see Perk.CRITICAL_FOCUS) to widen the crit range. Natural 1 is always a fumble regardless. */
+    data class AttackRoll(val naturalD20: Int, val total: Int, val critThreshold: Int = 20) {
+        val isCritical: Boolean get() = naturalD20 >= critThreshold
         val isFumble: Boolean get() = naturalD20 == 1
     }
 
@@ -182,9 +227,9 @@ object CombatMath {
     fun attackRoll(rng: Random, attackBonus: Int): Int = DiceFormula(1, DieType.D20, attackBonus).roll(rng)
 
     /** Full detail (natural face + total) for combat loops that apply the crit/fumble rule. */
-    fun attackRollDetailed(rng: Random, attackBonus: Int): AttackRoll {
+    fun attackRollDetailed(rng: Random, attackBonus: Int, critThreshold: Int = 20): AttackRoll {
         val natural = rng.nextInt(1, 21)
-        return AttackRoll(natural, natural + attackBonus)
+        return AttackRoll(natural, natural + attackBonus, critThreshold)
     }
 
     fun isHit(attackRoll: Int, targetArmorClass: Int): Boolean = attackRoll >= targetArmorClass

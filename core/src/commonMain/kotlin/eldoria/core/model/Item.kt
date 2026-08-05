@@ -2,7 +2,16 @@ package eldoria.core.model
 
 import kotlinx.serialization.Serializable
 
-enum class ItemKind { WEAPON, ARMOR, QUEST_ITEM, TRINKET, MATERIAL, BOAT }
+/**
+ * WEAPON/ARMOR(chest)/OFFHAND/HEAD/RING/AMULET are the six equip slots on
+ * PlayerCharacter (see equippedWeapon/equippedOffhand/equippedArmor/
+ * equippedHead/equippedRing/equippedAmulet) -- ARMOR specifically means the
+ * chest slot, kept its original name to avoid churning every existing call
+ * site for a cosmetic rename. RING/AMULET carry their bonus via
+ * `magicEffect` rather than `armorClassBonus`, reusing the same mechanism
+ * legendary items already use instead of adding parallel bonus fields.
+ */
+enum class ItemKind { WEAPON, ARMOR, OFFHAND, HEAD, RING, AMULET, QUEST_ITEM, TRINKET, MATERIAL, BOAT }
 
 /**
  * Any physical item: weapon, armor, quest item, or misc trinket. Combat and
@@ -23,6 +32,8 @@ data class Item(
     val isLegendary: Boolean = false,
     /** BOAT-only: fitted cannons add a bonus damage volley each round of ship combat, see Game.kt's shipEncounter. */
     val hasCannons: Boolean = false,
+    /** WEAPON-only: a chance to inflict this on a successful hit -- see Game.kt's `attack` and StatGenerator's legendary-weapon roll. */
+    val inflictsStatus: StatusEffect? = null,
 ) {
     val isBroken: Boolean get() = currentDurability <= 0
     fun worn(amount: Int): Item = copy(currentDurability = (currentDurability - amount).coerceAtLeast(0))

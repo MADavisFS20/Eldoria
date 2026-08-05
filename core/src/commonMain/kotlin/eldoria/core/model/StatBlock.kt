@@ -31,6 +31,8 @@ data class StatBlock(
     val magicDamage: DiceFormula?,
     val magicEffect: MagicEffect?,
     val worth: Int,
+    /** Statuses this being shrugs off entirely -- see model/StatusEffect.kt. Empty by default; Phase 2's ported named enemies (goblins, stone golems, etc.) get real per-type resistance lists. */
+    val statusResistances: Set<StatusEffect> = emptySet(),
 ) {
     companion object {
         // (score - 10).floorDiv(2): java.lang.Math.floorDiv is JVM-only, this

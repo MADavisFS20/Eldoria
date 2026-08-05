@@ -39,15 +39,21 @@ object CharacterPanel {
         sb.append(line("AC ${player.armorClass}   SPD ${player.speed}   ATK ${if (player.attackBonus >= 0) "+" else ""}${player.attackBonus}")).append('\n')
         sb.append(line("Gold: ${player.gold}g")).append('\n')
         sb.append(line("-".repeat(WIDTH))).append('\n')
-        sb.append(line("Weapon: ${player.equippedWeapon?.name ?: "none"} ${player.equippedWeapon?.damage?.let { "($it)" } ?: ""}")).append('\n')
-        sb.append(line("Armor:  ${player.equippedArmor?.name ?: "none"} ${player.equippedArmor?.armorClassBonus?.let { "(+$it AC)" } ?: ""}")).append('\n')
+        sb.append(line("Weapon:  ${player.equippedWeapon?.name ?: "none"} ${player.equippedWeapon?.damage?.let { "($it)" } ?: ""}")).append('\n')
+        sb.append(line("Chest:   ${player.equippedArmor?.name ?: "none"} ${player.equippedArmor?.armorClassBonus?.let { "(+$it AC)" } ?: ""}")).append('\n')
+        sb.append(line("Offhand: ${player.equippedOffhand?.name ?: "none"} ${player.equippedOffhand?.armorClassBonus?.let { "(+$it AC)" } ?: ""}")).append('\n')
+        sb.append(line("Head:    ${player.equippedHead?.name ?: "none"} ${player.equippedHead?.armorClassBonus?.let { "(+$it AC)" } ?: ""}")).append('\n')
+        sb.append(line("Ring:    ${player.equippedRing?.name ?: "none"} ${player.equippedRing?.magicEffect?.let { "(${it.name})" } ?: ""}")).append('\n')
+        sb.append(line("Amulet:  ${player.equippedAmulet?.name ?: "none"} ${player.equippedAmulet?.magicEffect?.let { "(${it.name})" } ?: ""}")).append('\n')
         sb.append(line("-".repeat(WIDTH))).append('\n')
         val topSkills = player.skills.values.sortedByDescending { it.level }.take(6)
         sb.append(line("Top skills:")).append('\n')
         for (s in topSkills) sb.append(line("  ${s.type.displayName}: ${s.level}")).append('\n')
         if (player.perks.isNotEmpty()) {
             sb.append(line("-".repeat(WIDTH))).append('\n')
-            sb.append(line("Perks: " + player.perks.joinToString(", ") { it.displayName })).append('\n')
+            sb.append(line("Perks: " + player.perks.entries.joinToString(", ") { (perk, rank) ->
+                if (rank > 1) "${perk.displayName} x$rank" else perk.displayName
+            })).append('\n')
         }
         if (player.pendingPerkChoices > 0) {
             sb.append(line("Perk choices available: ${player.pendingPerkChoices} (use 'perk')")).append('\n')
@@ -73,8 +79,9 @@ object CharacterPanel {
         if (player.inventory.isEmpty()) {
             sb.append(line("(empty)")).append('\n')
         } else {
+            val equippedItems = setOfNotNull(player.equippedWeapon, player.equippedArmor, player.equippedOffhand, player.equippedHead, player.equippedRing, player.equippedAmulet)
             for (item in player.inventory) {
-                val equipped = if (item == player.equippedWeapon || item == player.equippedArmor) " [equipped]" else ""
+                val equipped = if (item in equippedItems) " [equipped]" else ""
                 sb.append(line("${AnsiText.yellow(item.name)}$equipped -- ${item.value}g")).append('\n')
             }
         }

@@ -19,6 +19,7 @@ import eldoria.core.model.Disposition
 import eldoria.core.model.GameLocation
 import eldoria.core.model.HiredCompanion
 import eldoria.core.model.Item
+import eldoria.core.model.ItemKind
 import eldoria.core.model.Perk
 import eldoria.core.model.PlayerCharacter
 import eldoria.core.model.PopulationTier
@@ -29,6 +30,7 @@ import eldoria.core.model.SkillType
 import eldoria.core.model.SpawnEntry
 import eldoria.core.model.SpawnKind
 import eldoria.core.model.StatBlock
+import eldoria.core.model.StatusEffect
 import eldoria.core.model.Subclass
 import eldoria.core.model.TerrainKind
 import eldoria.core.world.BoatGenerator
@@ -628,6 +630,14 @@ private fun attack(session: GameSession, arg: String) {
     var targetHp = target.stats.maxHealth
     val weaponSkill = weaponSkillFor(session.player.equippedWeapon)
     val tier = session.currentRoom()?.difficultyTier ?: session.currentLocation.difficultyTier
+    // Perk.CRITICAL_FOCUS lowers the crit threshold by 1 per rank (nat 20, then 19+, ...); floored so a fumble (nat 1) is never in reach.
+    val critThreshold = (20 - session.player.perkRank(Perk.CRITICAL_FOCUS)).coerceAtLeast(15)
+
+    // Enemy-side status effect (see model/StatusEffect.kt) -- combat-local
+    // only, never persisted, matching the source prototype where only the
+    // player's attacks ever inflict a status, never the reverse.
+    var targetStatus: StatusEffect? = null
+    var targetStatusTurns = 0
 
     if (target.disposition != Disposition.HOSTILE) say(AnsiText.red("You raise your weapon against ${target.name}! This will not go unnoticed."))
     else say(AnsiText.red(DialogueContentRegistry.hostileLine(target.name, session.rng)))
@@ -638,14 +648,15 @@ private fun attack(session: GameSession, arg: String) {
         session.player = session.player.copy(currentStamina = (session.player.currentStamina - 1).coerceAtLeast(0))
         val exhausted = session.player.isExhausted
         val exhaustionPenalty = if (exhausted) 2 else 0
-        val playerRoll = CombatMath.attackRollDetailed(session.rng, session.player.attackBonus - exhaustionPenalty)
+        val playerRoll = CombatMath.attackRollDetailed(session.rng, session.player.attackBonus - exhaustionPenalty, critThreshold)
         if (exhausted && round == 1) say(AnsiText.dim("  You're exhausted -- your strikes are slower and less sure."))
         if (playerRoll.isFumble) {
             say(AnsiText.dim("  You fumble badly and swing at nothing. (natural 1)"))
         } else if (CombatMath.isHit(playerRoll, target.stats.armorClass)) {
             val subclass = session.player.subclass
             val rage = if (subclass != null && session.player.currentHealth * 2 < session.player.maxHealth) subclass.lowHealthRageBonus else 0
-            val weaponDamage = session.player.equippedWeapon?.damage ?: session.player.unarmedDamage
+            val weapon = session.player.equippedWeapon
+            val weaponDamage = weapon?.damage ?: session.player.unarmedDamage
             val dmg = (if (playerRoll.isCritical) CombatMath.criticalDamage(weaponDamage, session.rng) else weaponDamage.roll(session.rng)).coerceAtLeast(1) + rage
             targetHp -= dmg
             val rageNote = if (rage > 0) AnsiText.red(" (rage +$rage)") else ""
@@ -657,6 +668,15 @@ private fun attack(session: GameSession, arg: String) {
                 val newHealth = (session.player.currentHealth + healed).coerceAtMost(session.player.maxHealth)
                 session.player = session.player.copy(currentHealth = newHealth)
                 say(AnsiText.dim("  The wound feeds you -- you recover $healed health."))
+            }
+            weapon?.inflictsStatus?.let { effect ->
+                if (effect in target.stats.statusResistances) {
+                    say(AnsiText.dim("  ${target.name} resists the ${effect.displayName.lowercase()}."))
+                } else {
+                    targetStatus = effect
+                    targetStatusTurns = effect.defaultTurns
+                    say(AnsiText.red("  ${target.name} is afflicted with ${effect.displayName}!"))
+                }
             }
         } else {
             say(AnsiText.dim("  You swing at ${target.name} and miss. (roll ${playerRoll.total} vs AC ${target.stats.armorClass})"))
@@ -675,21 +695,39 @@ private fun attack(session: GameSession, arg: String) {
         }
         if (targetHp <= 0) break
 
-        val foeRoll = CombatMath.attackRollDetailed(session.rng, target.stats.attackBonus)
-        if (foeRoll.isFumble) {
-            say(AnsiText.dim("  ${target.name} fumbles and misses badly. (natural 1)"))
-        } else if (CombatMath.isHit(foeRoll, session.player.armorClass)) {
-            var dmg = if (foeRoll.isCritical) CombatMath.criticalDamage(target.stats.damage, session.rng) else target.stats.damage.roll(session.rng)
-            dmg = dmg.coerceAtLeast(1)
-            target.stats.magicDamage?.let { dmg += it.roll(session.rng) }
-            val resisted = (dmg * session.player.race.magicResistancePercent / 100.0).toInt()
-            dmg = (dmg - resisted).coerceAtLeast(1)
-            val newHp = session.player.currentHealth - dmg
-            session.player = session.player.copy(currentHealth = newHp)
-            val critNote = if (foeRoll.isCritical) AnsiText.bold(" CRITICAL HIT!") else ""
-            say("  ${target.name} hits you for $dmg damage.$critNote (roll ${foeRoll.total} vs your AC ${session.player.armorClass})")
-        } else {
-            say(AnsiText.dim("  ${target.name} attacks and misses. (roll ${foeRoll.total} vs your AC ${session.player.armorClass})"))
+        var foeSkipsTurn = false
+        targetStatus?.let { status ->
+            if (status.perTurnDamage > 0) {
+                targetHp -= status.perTurnDamage
+                say(AnsiText.red("  ${target.name} suffers ${status.perTurnDamage} ${status.displayName.lowercase()} damage!"))
+            }
+            foeSkipsTurn = status.skipsTurn
+            if (foeSkipsTurn) say(AnsiText.cyan("  ${target.name} is frozen solid and cannot act!"))
+            targetStatusTurns--
+            if (targetStatusTurns <= 0) {
+                say(AnsiText.dim("  The ${status.displayName.lowercase()} on ${target.name} fades."))
+                targetStatus = null
+            }
+        }
+        if (targetHp <= 0) break
+
+        if (!foeSkipsTurn) {
+            val foeRoll = CombatMath.attackRollDetailed(session.rng, target.stats.attackBonus)
+            if (foeRoll.isFumble) {
+                say(AnsiText.dim("  ${target.name} fumbles and misses badly. (natural 1)"))
+            } else if (CombatMath.isHit(foeRoll, session.player.armorClass)) {
+                var dmg = if (foeRoll.isCritical) CombatMath.criticalDamage(target.stats.damage, session.rng) else target.stats.damage.roll(session.rng)
+                dmg = dmg.coerceAtLeast(1)
+                target.stats.magicDamage?.let { dmg += it.roll(session.rng) }
+                val resisted = (dmg * session.player.race.magicResistancePercent / 100.0).toInt()
+                dmg = (dmg - resisted).coerceAtLeast(1)
+                val newHp = session.player.currentHealth - dmg
+                session.player = session.player.copy(currentHealth = newHp)
+                val critNote = if (foeRoll.isCritical) AnsiText.bold(" CRITICAL HIT!") else ""
+                say("  ${target.name} hits you for $dmg damage.$critNote (roll ${foeRoll.total} vs your AC ${session.player.armorClass})")
+            } else {
+                say(AnsiText.dim("  ${target.name} attacks and misses. (roll ${foeRoll.total} vs your AC ${session.player.armorClass})"))
+            }
         }
         if (!session.player.isAlive) return
     }
@@ -751,15 +789,50 @@ private fun take(session: GameSession, arg: String) {
     }
 }
 
+/**
+ * Adds (sign=1) or removes (sign=-1) an equipped item's passive bonus.
+ * armorClassBonus covers the three physical slots (chest/offhand/head);
+ * magicEffect covers rings/amulets (see Item.kt's doc on why they share
+ * that field instead of dedicated hp/mp/atk/def bonus fields). Weapons
+ * carry no passive bonus of their own -- their damage is read live off
+ * equippedWeapon at attack-time, not baked into a stat here.
+ */
+internal fun applyItemBonus(player: PlayerCharacter, item: Item, sign: Int): PlayerCharacter {
+    var p = player
+    item.armorClassBonus?.let { p = p.copy(armorClass = p.armorClass + it * sign) }
+    item.magicEffect?.let { effect ->
+        val delta = effect.magnitude * (if (effect.beneficial) 1 else -1) * sign
+        p = when (effect.affectedTrait) {
+            "strength" -> p.copy(strength = p.strength + delta)
+            "agility" -> p.copy(agility = p.agility + delta)
+            "willpower" -> p.copy(willpower = p.willpower + delta)
+            "armorClass" -> p.copy(armorClass = p.armorClass + delta)
+            "speed" -> p.copy(speed = p.speed + delta)
+            else -> p
+        }
+    }
+    return p
+}
+
+private val EQUIPPABLE_KINDS = setOf(ItemKind.WEAPON, ItemKind.ARMOR, ItemKind.OFFHAND, ItemKind.HEAD, ItemKind.RING, ItemKind.AMULET)
+
 private fun equip(session: GameSession, arg: String) {
     val item = session.player.inventory.firstOrNull { it.name.lowercase().contains(arg.lowercase()) }
     if (item == null) { say("You don't have that."); return }
-    session.player = when (item.kind) {
-        eldoria.core.model.ItemKind.WEAPON -> session.player.copy(equippedWeapon = item)
-        eldoria.core.model.ItemKind.ARMOR -> session.player.copy(equippedArmor = item)
-        else -> { say("You can't equip that."); return }
+    if (item.kind !in EQUIPPABLE_KINDS) { say("You can't equip that."); return }
+
+    var player = session.player
+    val previous = player.equippedInSlot(item.kind)
+    if (previous != null) {
+        player = applyItemBonus(player, previous, sign = -1)
+        player = player.copy(inventory = player.inventory + previous)
     }
-    say(AnsiText.yellow("You equip the ${item.name}."))
+    player = player.withEquippedInSlot(item.kind, item).copy(inventory = player.inventory - item)
+    player = applyItemBonus(player, item, sign = 1)
+
+    session.player = player
+    val swapNote = if (previous != null) " (${previous.name} returned to your pack)" else ""
+    say(AnsiText.yellow("You equip the ${item.name}.$swapNote"))
 }
 
 private fun craft(session: GameSession, arg: String) {
@@ -792,11 +865,18 @@ private fun craft(session: GameSession, arg: String) {
 
 private fun choosePerk(session: GameSession, arg: String) {
     if (session.player.pendingPerkChoices <= 0) { say("You have no perk choices banked right now."); return }
-    val available = Perk.entries.filter { it !in session.player.perks }
+    // Every perk can be picked repeatedly (perks is a stack count, see
+    // PlayerCharacter.perks' doc) -- ported from the Python prototype,
+    // where every perk was stackable with no cap.
+    val available = Perk.entries.toList()
     val choice = arg.toIntOrNull()
     if (choice == null || choice !in 1..available.size) {
         say("Choose a perk (type 'perk <number>'):")
-        available.forEachIndexed { i, p -> say("  ${i + 1}) ${p.displayName} -- ${p.description}") }
+        available.forEachIndexed { i, p ->
+            val rank = session.player.perkRank(p)
+            val rankNote = if (rank > 0) " (rank $rank)" else ""
+            say("  ${i + 1}) ${p.displayName}$rankNote -- ${p.description}")
+        }
         return
     }
     session.player = PerkEffects.applyPerk(session.player, available[choice - 1])
