@@ -100,10 +100,13 @@ def _overworld_tile_payload(session: GameSession, loc: GameLocation) -> dict:
 
 def _room_payload(session: GameSession, room: SubRealmRoom) -> dict:
     beings, items = _current_spot_beings_items(session)
+    sub_realm = session.current_sub_realm()
     return {
         "id": room.id,
+        "biome": sub_realm.biome.name if sub_realm is not None else None,
         "difficulty_tier": room.difficulty_tier,
         "is_boss_room": room.is_boss_room,
+        "is_entry_room": sub_realm is not None and room.id == sub_realm.entry_room_id,
         "exits": sorted(room.exits.keys()),
         "beings": beings,
         "items": items,

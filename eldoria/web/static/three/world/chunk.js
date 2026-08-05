@@ -111,5 +111,9 @@ export function buildChunk(tile) {
     items.push(marker);
   }
 
-  return { group, beings, items, tile };
+  // `doors` is always empty for overworld chunks -- boundary crossing here
+  // is automatic (crossing.js) rather than proximity+interact, but the
+  // shape matches subrealm/roomScene.js's chunks so proximity.js can treat
+  // either kind of "current pocket" the same way.
+  return { group, beings, items, doors: [], tile };
 }

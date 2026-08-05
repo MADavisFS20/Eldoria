@@ -22,7 +22,7 @@ const DIR_VECTOR = {
   west: { dx: -1, dz: 0 },
 };
 
-export function attachCrossing({ player, controller, sendGameCommand, onSync, onToast, streamRadius = 3 }) {
+export function attachCrossing({ player, controller, sendGameCommand, onSync, streamRadius = 3 }) {
   let tile = null; // the tile the player is currently standing on
   let tileOrigin = { x: 0, z: 0 }; // that tile's world-space center
 
@@ -38,10 +38,9 @@ export function attachCrossing({ player, controller, sendGameCommand, onSync, on
     await sendGameCommand(direction);
   }
 
-  function onCommandResult(log) {
-    const notable = (log || []).find((l) => l.style === "red");
-    if (notable && onToast) onToast(notable.text, true);
-
+  function onCommandResult() {
+    // Toast display for notable log lines is handled centrally in scene.js
+    // (it applies to sub-realm interactions too, not just crossings here).
     fetchTiles3d({ radius: streamRadius }).then((data) => {
       controller.setLocked(false);
       if (!data.tiles || !data.tiles.length) return;

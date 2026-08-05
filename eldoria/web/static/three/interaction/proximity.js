@@ -1,12 +1,13 @@
-// Walking up to a being/item/portal shows a prompt that fires the exact
-// same text command the manual command form would send -- full name,
-// never a cached index (commands.py resolves by live substring match, and
-// list order isn't stable across defeat/respawn).
+// Walking up to a being/item/portal/door shows a prompt that fires the
+// exact same text command the manual command form would send -- full name
+// (or direction, for doors), never a cached index (commands.py resolves
+// by live substring match, and list order isn't stable across
+// defeat/respawn).
 //
-// Only ever checks the player's actual CURRENT tile, matching the server:
-// session.current_beings()/current_items() only ever reflect that spot,
-// so a being sitting in an already-streamed neighboring tile simply isn't
-// interactable yet -- faithful to how "attack"/"talk" already worked.
+// Only ever checks the player's actual CURRENT tile/room, matching the
+// server: session.current_beings()/current_items() only ever reflect that
+// spot, so a being sitting in an already-streamed neighboring tile simply
+// isn't interactable yet -- faithful to how "attack"/"talk" already worked.
 import * as THREE from "../vendor/three.module.js";
 import { tileWorldPosition } from "../world/worldManager.js";
 
@@ -15,6 +16,12 @@ const _tmp = new THREE.Vector3();
 
 function verbFor(being) {
   return being.disposition === "HOSTILE" ? "attack" : "talk";
+}
+
+function doorLabel(direction) {
+  if (direction === "leave") return "Leave";
+  if (direction.startsWith("passage_to_")) return "Go through the passage";
+  return `Go ${direction}`;
 }
 
 export function attachProximity({ player, getCurrentChunk, sendGameCommand }) {
@@ -45,6 +52,8 @@ export function attachProximity({ player, getCurrentChunk, sendGameCommand }) {
       sendGameCommand(`take ${target.name}`);
     } else if (target.kind === "portal") {
       sendGameCommand("enter");
+    } else if (target.kind === "door") {
+      sendGameCommand(target.direction);
     }
   }
 
@@ -76,7 +85,15 @@ export function attachProximity({ player, getCurrentChunk, sendGameCommand }) {
         closest = { kind: "item", name: proxy.userData.item.name };
       }
     }
-    if (chunk.tile.portal_kind) {
+    for (const proxy of chunk.doors || []) {
+      proxy.getWorldPosition(_tmp);
+      const d = player.position.distanceTo(_tmp);
+      if (d < closestDist) {
+        closestDist = d;
+        closest = { kind: "door", direction: proxy.userData.door.direction };
+      }
+    }
+    if (chunk.tile && chunk.tile.portal_kind) {
       const origin = tileWorldPosition(chunk.tile.x, chunk.tile.y);
       const d = Math.hypot(player.position.x - origin.x, player.position.z - origin.z);
       if (d < closestDist) {
@@ -87,9 +104,12 @@ export function attachProximity({ player, getCurrentChunk, sendGameCommand }) {
 
     target = closest;
     if (target) {
-      const verb = target.kind === "being" ? verbFor(target.data) : target.kind === "item" ? "take" : "enter";
-      const label = verb.charAt(0).toUpperCase() + verb.slice(1);
-      p.textContent = `[E] ${label}${target.kind === "portal" ? "" : " " + target.name}`;
+      let label;
+      if (target.kind === "being") label = `${verbFor(target.data).replace(/^./, (c) => c.toUpperCase())} ${target.name}`;
+      else if (target.kind === "item") label = `Take ${target.name}`;
+      else if (target.kind === "door") label = doorLabel(target.direction);
+      else label = "Enter";
+      p.textContent = `[E] ${label}`;
       p.style.display = "block";
     } else {
       p.style.display = "none";
