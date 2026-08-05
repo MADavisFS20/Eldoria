@@ -1,0 +1,95 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>Eldoria</title>
+  <link rel="stylesheet" href="/style.css" />
+</head>
+<body>
+  <div id="app">
+
+    <div id="creation">
+      <div class="creation-card">
+        <h1>ELDORIA</h1>
+        <p class="subtitle">Stolen from your family as a child, you set out to find them.</p>
+
+        <div class="field">
+          <label for="name-input">Name</label>
+          <input type="text" id="name-input" placeholder="Wanderer" maxlength="40" />
+        </div>
+
+        <div class="field">
+          <label>Race</label>
+          <div class="option-grid" id="race-grid"></div>
+        </div>
+
+        <div class="field">
+          <label>Class</label>
+          <div class="option-grid" id="class-grid"></div>
+        </div>
+
+        <button id="begin-btn" disabled>Begin</button>
+        <button id="continue-btn">Continue previous game</button>
+
+        <div class="creation-footer">
+          <p>Developed by <strong>Matthew Aaron Davis</strong> in cooperation with <strong>Claude CLI</strong>.</p>
+          <p>Inspired by <em>Achaea, Dreams of Divine Lands</em> (achaea.com), the text-based MUD that started it all.</p>
+          <p class="copyright">&copy; 2026 Matthew Aaron Davis. All rights reserved.</p>
+        </div>
+      </div>
+    </div>
+
+    <div id="game" class="hidden">
+      <header>
+        <h1>ELDORIA</h1>
+        <span class="header-hint">type 'help' for commands</span>
+      </header>
+
+      <div id="content-area">
+        <div id="log-panel"></div>
+
+        <div id="h-resize-handle" title="Drag to resize"><span></span></div>
+
+        <div id="map-section">
+          <div id="map-frame">
+            <div id="map-grid"></div>
+          </div>
+          <div id="map-legend"></div>
+        </div>
+      </div>
+
+      <div id="side-drawer">
+        <button id="side-tab-handle" title="Character &amp; Inventory">
+          <span class="tab-icon">⚔</span>
+          <span class="tab-label">CHARACTER</span>
+        </button>
+
+        <div id="side-panel-content">
+          <div id="v-resize-handle" title="Drag to resize"><span></span></div>
+          <div class="side-panel-inner">
+            <div class="side-panel-header">
+              <button class="side-sub-tab active" data-tab="character">Character</button>
+              <button class="side-sub-tab" data-tab="inventory">Inventory</button>
+              <button class="side-sub-tab" data-tab="estate">Estate</button>
+              <button id="side-close-btn" title="Close">×</button>
+            </div>
+            <div class="side-panel-body">
+              <div id="side-character"></div>
+              <div id="side-inventory" style="display:none"></div>
+              <div id="side-estate" style="display:none"></div>
+            </div>
+          </div>
+        </div>
+      </div>
+
+      <form id="command-form" autocomplete="off">
+        <input type="text" id="command-input" placeholder="Type a command... (try 'help')" autofocus />
+        <button type="submit">Send</button>
+      </form>
+    </div>
+
+  </div>
+  <script src="/app.js"></script>
+</body>
+</html>

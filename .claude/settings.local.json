@@ -10,7 +10,21 @@
       "Bash(gradle :core:run --console=plain)",
       "WebSearch",
       "Bash(gradle :core:compileKotlin --console=plain)",
-      "Bash(gradle :core:play --console=plain -q)"
+      "Bash(gradle :core:play --console=plain -q)",
+      "Bash(timeout 590 gradle :ui:compileKotlinJvm --console=plain)",
+      "Bash(timeout 590 gradle :ui:compileKotlinWasmJs --console=plain)",
+      "Bash(timeout 590 gradle :ui:wasmJsBrowserDistribution --console=plain)",
+      "Read(//data/data/com.termux/files/usr/lib/chromium/**)",
+      "Bash(timeout 60 chromium-browser --headless=new --disable-gpu --no-sandbox --screenshot=/data/data/com.termux/files/usr/tmp/claude-10366/-data-data-com-termux-files-home-Eldoria/ac70f40f-cdd7-488b-a952-e9bd5bb5a57c/scratchpad/eldoria_ui.png --window-size=1000,700 --virtual-time-budget=8000 http://localhost:8734/)",
+      "Bash(timeout 30 chromium-browser --headless --disable-gpu --disable-software-rasterizer --no-sandbox --screenshot=/data/data/com.termux/files/usr/tmp/claude-10366/-data-data-com-termux-files-home-Eldoria/ac70f40f-cdd7-488b-a952-e9bd5bb5a57c/scratchpad/eldoria_ui3.png --window-size=1000,700 --virtual-time-budget=8000 http://localhost:8734/)",
+      "Bash(timeout 590 gradle :ui:compileKotlinJvm :ui:compileKotlinWasmJs --console=plain)",
+      "Bash(timeout 590 gradle :ui:wasmJsBrowserDevelopmentExecutableDistribution --console=plain)",
+      "Bash(python3 *)",
+      "Bash(pkill -f \"http.server 8734\")",
+      "Bash(chromium-browser *)",
+      "Bash(gradle :ui:tasks --all --console=plain)",
+      "Bash(gradle --stop)",
+      "Read(//data/data/com.termux/files/usr/lib/**)"
     ]
   }
 }
