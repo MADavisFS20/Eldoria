@@ -50,3 +50,39 @@ def test_static_files_served():
     assert client.get("/").status_code == 200
     assert client.get("/app.js").status_code == 200
     assert client.get("/style.css").status_code == 200
+
+
+def test_tiles3d_on_unknown_session_is_404():
+    r = client.get("/api/tiles3d/does-not-exist")
+    assert r.status_code == 404
+
+
+def test_tiles3d_only_shows_discovered_tiles_with_live_beings_at_current_spot():
+    r = client.post("/api/new_game", json={"name": "Scout", "race": "HUMAN", "character_class": "WARRIOR"})
+    session_id = r.json()["session_id"]
+
+    r = client.get(f"/api/tiles3d/{session_id}?radius=5")
+    assert r.status_code == 200
+    data = r.json()
+    assert "tiles" in data
+    here = data["you"]
+
+    ids_seen = {t["id"] for t in data["tiles"]}
+    assert f"{here['x']}_{here['y']}" in ids_seen
+
+    current_tile = next(t for t in data["tiles"] if t["id"] == f"{here['x']}_{here['y']}")
+    assert current_tile["biome"]
+    assert current_tile["terrain"] in {"LAND", "WATERWAY", "BRIDGE"}
+
+    # A far-off corner tile the player has never visited must never appear,
+    # even though it's a valid in-bounds coordinate.
+    r2 = client.get(f"/api/tiles3d/{session_id}?cx=0&cy=0&radius=1")
+    far_ids = {t["id"] for t in r2.json()["tiles"]}
+    assert "0_0" not in far_ids
+
+    # A neighboring tile that IS discovered shows terrain but no live beings/items
+    # (only the player's actual current spot reflects live respawn/defeat state).
+    neighbor = next((t for t in data["tiles"] if t["id"] != current_tile["id"]), None)
+    if neighbor is not None:
+        assert neighbor["beings"] == []
+        assert neighbor["items"] == []

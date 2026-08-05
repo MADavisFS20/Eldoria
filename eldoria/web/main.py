@@ -101,5 +101,13 @@ def state(session_id: str) -> dict:
     return _state(session)
 
 
+@app.get("/api/tiles3d/{session_id}")
+def tiles3d(session_id: str, cx: int | None = None, cy: int | None = None, radius: int = 3) -> dict:
+    session = session_store.get(session_id)
+    if session is None:
+        raise HTTPException(status_code=404, detail="Unknown session")
+    return map_renderer.tiles_3d(session, cx, cy, radius)
+
+
 _static_dir = Path(__file__).resolve().parent / "static"
 app.mount("/", StaticFiles(directory=_static_dir, html=True), name="static")

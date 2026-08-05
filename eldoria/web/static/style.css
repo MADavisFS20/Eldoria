@@ -201,6 +201,38 @@ body {
   position: relative;
 }
 
+/* --- 3D exploration layer: full-viewport canvas behind the text HUD --- */
+
+#scene3d {
+  position: absolute;
+  inset: 0;
+  z-index: 0;
+  width: 100%;
+  height: 100%;
+  display: block;
+}
+
+.hud-el { position: relative; z-index: 1; }
+
+#game.hud-collapsed .hud-el { display: none; }
+
+#hud-toggle-btn {
+  position: absolute;
+  top: 0.6rem;
+  right: 0.7rem;
+  z-index: 2;
+  width: 2.2rem;
+  height: 2.2rem;
+  border-radius: 6px;
+  border: 1px solid var(--border);
+  background: rgba(18, 20, 26, 0.75);
+  color: var(--accent);
+  font-size: 1rem;
+  cursor: pointer;
+}
+
+#scene3d-prompt, #scene3d-toast { user-select: none; }
+
 header {
   flex: none;
   display: flex;

@@ -7,6 +7,7 @@
   let latestState = null;
   let selectedRace = null;
   let selectedClass = null;
+  const stateListeners = [];
 
   // --- Character creation -------------------------------------------------
 
@@ -352,7 +353,23 @@
     latestState = data.state;
     renderSidePanel();
     renderMap();
+    stateListeners.forEach((cb) => {
+      try { cb(data.log, latestState); } catch (e) { console.error(e); }
+    });
   }
+
+  // --- 3D layer hook (see eldoria/web/static/three/bridge.js) ----------------
+
+  window.__eldoria = {
+    isGameActive: () => !!sessionId,
+    getSessionId: () => sessionId,
+    getState: () => latestState,
+    sendCommand: async (text, opts = {}) => {
+      if (!opts.silent) appendLog([{ style: "plain", text: `> ${text}` }]);
+      await sendCommand(text);
+    },
+    onStateUpdate: (cb) => stateListeners.push(cb),
+  };
 
   // --- Wire up --------------------------------------------------------------
 

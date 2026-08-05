@@ -41,12 +41,15 @@
     </div>
 
     <div id="game" class="hidden">
-      <header>
+      <canvas id="scene3d"></canvas>
+      <button id="hud-toggle-btn" title="Toggle HUD">☰</button>
+
+      <header class="hud-el">
         <h1>ELDORIA</h1>
         <span class="header-hint">type 'help' for commands</span>
       </header>
 
-      <div id="content-area">
+      <div id="content-area" class="hud-el">
         <div id="log-panel"></div>
 
         <div id="h-resize-handle" title="Drag to resize"><span></span></div>
@@ -59,7 +62,7 @@
         </div>
       </div>
 
-      <div id="side-drawer">
+      <div id="side-drawer" class="hud-el">
         <button id="side-tab-handle" title="Character &amp; Inventory">
           <span class="tab-icon">⚔</span>
           <span class="tab-label">CHARACTER</span>
@@ -83,7 +86,7 @@
         </div>
       </div>
 
-      <form id="command-form" autocomplete="off">
+      <form id="command-form" class="hud-el" autocomplete="off">
         <input type="text" id="command-input" placeholder="Type a command... (try 'help')" autofocus />
         <button type="submit">Send</button>
       </form>
@@ -91,5 +94,6 @@
 
   </div>
   <script src="/app.js"></script>
+  <script type="module" src="/three/scene.js"></script>
 </body>
 </html>
