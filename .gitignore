@@ -2,6 +2,7 @@ __pycache__/
 *.pyc
 savegame.pkl
 .gradle/
+.kotlin/
 build/
 core/build/
 *.iml
