@@ -2,13 +2,22 @@
 // same text command the manual command form would send -- full name,
 // never a cached index (commands.py resolves by live substring match, and
 // list order isn't stable across defeat/respawn).
+//
+// Only ever checks the player's actual CURRENT tile, matching the server:
+// session.current_beings()/current_items() only ever reflect that spot,
+// so a being sitting in an already-streamed neighboring tile simply isn't
+// interactable yet -- faithful to how "attack"/"talk" already worked.
+import * as THREE from "../vendor/three.module.js";
+import { tileWorldPosition } from "../world/worldManager.js";
+
 const INTERACT_RADIUS = 3.2;
+const _tmp = new THREE.Vector3();
 
 function verbFor(being) {
   return being.disposition === "HOSTILE" ? "attack" : "talk";
 }
 
-export function attachProximity({ player, getChunk, sendGameCommand }) {
+export function attachProximity({ player, getCurrentChunk, sendGameCommand }) {
   let promptEl = null;
   let target = null;
 
@@ -40,7 +49,7 @@ export function attachProximity({ player, getChunk, sendGameCommand }) {
   }
 
   function update() {
-    const chunk = getChunk();
+    const chunk = getCurrentChunk();
     const p = ensurePrompt();
     if (!chunk) {
       p.style.display = "none";
@@ -52,21 +61,24 @@ export function attachProximity({ player, getChunk, sendGameCommand }) {
     let closestDist = INTERACT_RADIUS;
 
     for (const proxy of chunk.beings || []) {
-      const d = player.position.distanceTo(proxy.position);
+      proxy.getWorldPosition(_tmp);
+      const d = player.position.distanceTo(_tmp);
       if (d < closestDist) {
         closestDist = d;
         closest = { kind: "being", name: proxy.userData.being.name, data: proxy.userData.being };
       }
     }
     for (const proxy of chunk.items || []) {
-      const d = player.position.distanceTo(proxy.position);
+      proxy.getWorldPosition(_tmp);
+      const d = player.position.distanceTo(_tmp);
       if (d < closestDist) {
         closestDist = d;
         closest = { kind: "item", name: proxy.userData.item.name };
       }
     }
     if (chunk.tile.portal_kind) {
-      const d = Math.hypot(player.position.x, player.position.z);
+      const origin = tileWorldPosition(chunk.tile.x, chunk.tile.y);
+      const d = Math.hypot(player.position.x - origin.x, player.position.z - origin.z);
       if (d < closestDist) {
         closestDist = d;
         closest = { kind: "portal", name: "Enter" };

@@ -2,12 +2,15 @@
 // module below. The 3D canvas is a spatial front door to the existing
 // text-command engine -- it never reimplements game logic.
 import * as THREE from "./vendor/three.module.js";
-import { buildChunk, CHUNK_SIZE } from "./world/chunk.js";
+import { createWorldManager, tileWorldPosition } from "./world/worldManager.js";
+import { biomeKitFor } from "./world/biomeKit.js";
 import { fetchTiles3d } from "./api3d.js";
 import { sendGameCommand, onGameStateUpdate, isGameActive } from "./bridge.js";
 import { createController } from "./player/controller.js";
 import { attachCrossing } from "./interaction/crossing.js";
 import { attachProximity } from "./interaction/proximity.js";
+
+const STREAM_RADIUS = 2; // 5x5 tile window kept loaded around the player
 
 const canvas = document.getElementById("scene3d");
 if (canvas) {
@@ -41,7 +44,7 @@ if (canvas) {
 
   const scene = new THREE.Scene();
   scene.background = new THREE.Color(0xbfe0a0);
-  scene.fog = new THREE.Fog(0xbfe0a0, 20, 60);
+  scene.fog = new THREE.Fog(0xbfe0a0, 25, 90);
 
   const camera = new THREE.PerspectiveCamera(65, window.innerWidth / window.innerHeight, 0.1, 500);
 
@@ -59,21 +62,19 @@ if (canvas) {
   player.add(playerMesh);
   scene.add(player);
 
-  let currentChunk = null;
+  const world = createWorldManager(scene);
+  let lastBiome = null;
 
-  function loadChunk(tile) {
-    if (currentChunk) {
-      scene.remove(currentChunk.group);
-      currentChunk.group.traverse((o) => {
-        if (o.geometry) o.geometry.dispose();
-        if (o.material) o.material.dispose();
-      });
-    }
-    currentChunk = buildChunk(tile);
-    scene.add(currentChunk.group);
-    scene.background.set(0xbfe0a0);
-    scene.fog.color.set(0xbfe0a0);
-    return currentChunk;
+  function applyAtmosphereFor(tile) {
+    if (!tile || tile.biome === lastBiome) return;
+    lastBiome = tile.biome;
+    const kit = biomeKitFor(tile.biome);
+    scene.background.set(kit.sky);
+    scene.fog.color.set(kit.sky);
+  }
+
+  function onSync(tiles) {
+    world.sync(tiles);
   }
 
   const controller = createController({ player, camera, canvas });
@@ -81,12 +82,16 @@ if (canvas) {
     player,
     controller,
     sendGameCommand,
-    onChunkChange: loadChunk,
+    onSync,
     onToast: showToast,
+    streamRadius: STREAM_RADIUS,
   });
   const proximity = attachProximity({
     player,
-    getChunk: () => currentChunk,
+    getCurrentChunk: () => {
+      const tile = crossing.getCurrentTile();
+      return tile ? world.get(tile.id) : null;
+    },
     sendGameCommand,
   });
 
@@ -97,12 +102,14 @@ if (canvas) {
       setTimeout(tryInitialLoad, 300);
       return;
     }
-    fetchTiles3d({ radius: 1 }).then((data) => {
+    fetchTiles3d({ radius: STREAM_RADIUS }).then((data) => {
       if (!data.tiles || !data.tiles.length) return;
       const here = data.tiles.find((t) => t.id === `${data.you.x}_${data.you.y}`) || data.tiles[0];
+      world.sync(data.tiles);
       crossing.setCurrentTile(here);
-      player.position.set(0, 0, 0);
-      loadChunk(here);
+      const pos = tileWorldPosition(here.x, here.y);
+      player.position.set(pos.x, 0, pos.z);
+      applyAtmosphereFor(here);
     });
   }
   tryInitialLoad();
@@ -114,6 +121,7 @@ if (canvas) {
     controller.update(dt);
     crossing.update();
     proximity.update();
+    applyAtmosphereFor(crossing.getCurrentTile());
     renderer.render(scene, camera);
   }
   animate();

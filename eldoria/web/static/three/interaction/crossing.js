@@ -3,7 +3,13 @@
 // in commands.move() server-side -- this module never simulates a crossing,
 // it only detects the boundary, soft-locks input, and fires the real
 // "north"/"south"/"east"/"west" command through bridge.js.
+//
+// Phase 2: chunks are positioned at true world coordinates (see
+// worldManager.js), so once a crossing is confirmed the player is already
+// standing at the contiguous edge of the next tile -- no repositioning
+// needed, unlike Phase 1's single-chunk-at-origin model.
 import { CHUNK_SIZE } from "../world/chunk.js";
+import { tileWorldPosition } from "../world/worldManager.js";
 import { fetchTiles3d } from "../api3d.js";
 
 const HALF = CHUNK_SIZE / 2;
@@ -16,24 +22,18 @@ const DIR_VECTOR = {
   west: { dx: -1, dz: 0 },
 };
 
-function entryPositionFor(direction) {
-  const vec = DIR_VECTOR[direction];
-  const inset = HALF - MARGIN * 2;
-  return { x: -vec.dx * inset, z: -vec.dz * inset };
-}
-
-export function attachCrossing({ player, controller, sendGameCommand, onChunkChange, onToast }) {
-  let tile = null;
-  let lastDirection = null;
+export function attachCrossing({ player, controller, sendGameCommand, onSync, onToast, streamRadius = 3 }) {
+  let tile = null; // the tile the player is currently standing on
+  let tileOrigin = { x: 0, z: 0 }; // that tile's world-space center
 
   function setCurrentTile(newTile) {
     tile = newTile;
+    tileOrigin = tileWorldPosition(newTile.x, newTile.y);
   }
 
   async function crossTo(direction) {
     if (controller.isLocked() || !tile) return;
     if (!tile.exits || !tile.exits.includes(direction)) return;
-    lastDirection = direction;
     controller.setLocked(true);
     await sendGameCommand(direction);
   }
@@ -42,43 +42,41 @@ export function attachCrossing({ player, controller, sendGameCommand, onChunkCha
     const notable = (log || []).find((l) => l.style === "red");
     if (notable && onToast) onToast(notable.text, true);
 
-    fetchTiles3d({ radius: 1 }).then((data) => {
+    fetchTiles3d({ radius: streamRadius }).then((data) => {
       controller.setLocked(false);
       if (!data.tiles || !data.tiles.length) return;
       const here = data.tiles.find((t) => t.id === `${data.you.x}_${data.you.y}`);
-      if (!here) return;
-      const moved = !tile || here.id !== tile.id;
-      setCurrentTile(here);
-      onChunkChange(here);
-      if (moved && lastDirection) {
-        const entry = entryPositionFor(lastDirection);
-        player.position.set(entry.x, player.position.y, entry.z);
-      } else if (!moved) {
-        // Crossing was blocked server-side (e.g. water without a boat) --
-        // stay put at the boundary rather than implying arrival.
+      onSync(data.tiles);
+      if (here && (!tile || here.id !== tile.id)) {
+        setCurrentTile(here);
       }
-      lastDirection = null;
+      // If the crossing was blocked server-side (water without a boat, a
+      // dead end, etc.) `tile` stays the same and the player remains
+      // clamped at the boundary from update() below -- no illusion of
+      // arrival.
     });
   }
 
   function update() {
     if (controller.isLocked() || !tile) return;
     const p = player.position;
+    const localX = p.x - tileOrigin.x;
+    const localZ = p.z - tileOrigin.z;
     for (const dir in DIR_VECTOR) {
       const vec = DIR_VECTOR[dir];
-      const edgeCoord = vec.dx !== 0 ? p.x * vec.dx : p.z * vec.dz;
+      const edgeCoord = vec.dx !== 0 ? localX * vec.dx : localZ * vec.dz;
       if (edgeCoord > HALF - MARGIN) {
         if (tile.exits && tile.exits.includes(dir)) {
           crossTo(dir);
         } else if (vec.dx !== 0) {
-          p.x = (HALF - MARGIN) * vec.dx;
+          p.x = tileOrigin.x + (HALF - MARGIN) * vec.dx;
         } else {
-          p.z = (HALF - MARGIN) * vec.dz;
+          p.z = tileOrigin.z + (HALF - MARGIN) * vec.dz;
         }
         return;
       }
     }
   }
 
-  return { update, setCurrentTile, onCommandResult };
+  return { update, setCurrentTile, onCommandResult, getCurrentTile: () => tile };
 }
