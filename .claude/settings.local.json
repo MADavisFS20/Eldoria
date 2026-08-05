@@ -1,0 +1,16 @@
+{
+  "permissions": {
+    "allow": [
+      "Bash(curl -sI --max-time 8 https://repo1.maven.org/maven2/)",
+      "Bash(echo \"exit:$?\")",
+      "Read(//data/data/com.termux/files/home/.gradle/**)",
+      "Bash(mkdir -p /data/data/com.termux/files/home/Eldoria/core/src/main/kotlin/eldoria/core/model)",
+      "Bash(mkdir -p /data/data/com.termux/files/home/Eldoria/core/src/main/kotlin/eldoria/core/data)",
+      "Bash(mkdir -p /data/data/com.termux/files/home/Eldoria/core/src/main/kotlin/eldoria/core/world)",
+      "Bash(gradle :core:run --console=plain)",
+      "WebSearch",
+      "Bash(gradle :core:compileKotlin --console=plain)",
+      "Bash(gradle :core:play --console=plain -q)"
+    ]
+  }
+}

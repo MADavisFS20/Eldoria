@@ -1,0 +1,309 @@
+import random
+import copy
+from rpg_game.combat import start_combat, GOBLIN, DIRE_WOLF, BANDIT_LEADER, SHADOW_CULTIST, STONE_GOLEM, ANCIENT_DRAGON, GIANT_TOAD, MOUNTAIN_GOAT, GIANT_CRAB, SKELETAL_WARRIOR
+from rpg_game.items import ANCIENT_RELIC, GLOWING_MUSHROOM, HEALTH_POTION_M, MANA_POTION_M, IRON_HELMET, RING_OF_HEALTH, AMULET_OF_MANA, SWAMP_HERB, SHIP_MANIFEST, ANCIENT_COMPASS, LOST_MINER_NOTE, WAR_AXE, LEATHER_HELMET, SHORT_BOW, CHAINMAIL_ARMOR, AMULET_OF_STAMINA, RING_OF_DEFENSE, STAMINA_POTION_S
+from rpg_game.utils import clear_screen, display_message, press_enter_to_continue, get_input
+from rpg_game.quests import ALL_QUESTS, QUEST_POISONED_WATERS, QUEST_LOST_CARGO, QUEST_MOUNTAIN_RESCUE, QUEST_ANCIENT_COMPASS
+from rpg_game.shop import Shop
+
+class Location:
+    def __init__(self, name, description, exits, encounters=None, items=None, npcs=None, shop=None):
+        self.name = name
+        self.description = description
+        self.exits = exits
+        self.encounters = encounters if encounters is not None else []
+        self.items = items if items is not None else []
+        self.npcs = npcs if npcs is not None else []
+        self.shop = shop
+        self.visited = False
+
+    def display_info(self):
+        display_message(f"\n=== {self.name} ===")
+        display_message(self.description)
+        if self.items:
+            display_message("Ground Items: " + ", ".join([i.name for i in self.items]))
+        if self.npcs:
+            display_message("NPCs present: " + ", ".join(self.npcs))
+        
+        display_message("\n--- Exits ---")
+        for direction, dest_key in self.exits.items():
+            display_message(f"  - {direction.capitalize()}: {WORLD_MAP[dest_key].name}")
+
+    def handle_action(self, player, action, game_state, ai_engine=None):
+        if action == 'look':
+            self.display_info()
+            return True
+        elif action == 'take':
+            if not self.items:
+                display_message("Nothing to pick up.")
+                return True
+            
+            # Allow picking up specific items or all
+            if len(self.items) == 1:
+                item_to_take = self.items[0]
+                player.inventory.append(item_to_take)
+                display_message(f"Picked up {item_to_take.name}.")
+                self.items.remove(item_to_take)
+            else:
+                item_names = [item.name for item in self.items]
+                choice = get_input(f"Which item to take? ({'/'.join(item_names)}/all/back)", item_names + ['all', 'back'])
+                if choice == 'back':
+                    return True
+                elif choice == 'all':
+                    for item in list(self.items): # Iterate over a copy
+                        player.inventory.append(item)
+                        display_message(f"Picked up {item.name}.")
+                        self.items.remove(item)
+                else:
+                    item_to_take = next((item for item in self.items if item.name.lower() == choice), None)
+                    if item_to_take:
+                        player.inventory.append(item_to_take)
+                        display_message(f"Picked up {item_to_take.name}.")
+                        self.items.remove(item_to_take)
+                    else:
+                        display_message("That item is not here.")
+            return True
+        elif action == 'talk':
+            if not self.npcs:
+                display_message("No one to talk to.")
+                return True
+            
+            npc_names = [npc for npc in self.npcs]
+            npc_choice = get_input(f"Talk to whom? ({'/'.join(npc_names)}/back)", npc_names + ['back'])
+            if npc_choice == 'back':
+                return True
+            
+            npc = npc_choice # The chosen NPC name
+
+            display_message(f"\nYou approach {npc}.")
+            if ai_engine and ai_engine.enabled:
+                prompt = get_input(f"Talk to {npc} (or press Enter for standard quest script):")
+                if prompt.strip():
+                    # Provide a simple persona for the AI
+                    persona_map = {
+                        "Elder Theron": "The wise and concerned elder of Oakhaven.",
+                        "Fisherman Finn": "A gruff but kind fisherman from the Coastal Town.",
+                        "Mountain Guide": "A seasoned and cautious guide of the Ironstone Mountains.",
+                        "Arcane Vendor": "A mysterious merchant dealing in rare magical artifacts."
+                    }
+                    npc_persona = persona_map.get(npc, "A local resident.")
+                    resp = ai_engine.generate_npc_response(npc, npc_persona, player.name, prompt)
+                    if resp:
+                        display_message(f"{npc}: \"{resp}\"")
+                        press_enter_to_continue()
+                        return True
+
+            # Standard quest script logic
+            if npc == "Elder Theron":
+                q_relic = ALL_QUESTS["the_lost_relic"]
+                q_poison = ALL_QUESTS["poisoned_waters"]
+
+                if not q_relic.is_active and not q_relic.is_completed:
+                    display_message("Elder Theron: \"Ah, a new face! The Whispering Woods hide an ancient relic, vital to our village's protection. Will you seek it out?\"")
+                    if get_input("Accept quest 'The Ancient Relic'? (yes/no)", ['yes', 'no']) == 'yes':
+                        q_relic.activate()
+                elif q_relic.is_active:
+                    relic = next((i for i in player.inventory if i.name == ANCIENT_RELIC.name), None)
+                    if relic:
+                        player.inventory.remove(relic)
+                        q_relic.complete(player)
+                        display_message("Elder Theron: \"You have returned the relic! Oakhaven is safer thanks to you, hero.\"")
+                    else:
+                        display_message("Elder Theron: \"Have you found the ancient relic yet? The village depends on it.\"")
+                
+                if not q_poison.is_active and not q_poison.is_completed:
+                    display_message("Elder Theron: \"Our water supply from the swamps has become tainted. If you could gather 3 Swamp Herbs, it might help purify it.\"")
+                    if get_input("Accept quest 'The Poisoned Waters'? (yes/no)", ['yes', 'no']) == 'yes':
+                        q_poison.activate()
+                elif q_poison.is_active:
+                    if q_poison.complete(player): # complete handles item removal
+                        display_message("Elder Theron: \"Excellent! These herbs will surely help. Thank you, adventurer.\"")
+                    else:
+                        display_message("Elder Theron: \"The waters still run foul. Have you found enough Swamp Herbs yet?\"")
+
+            elif npc == "Fisherman Finn":
+                q_cargo = ALL_QUESTS["lost_cargo"]
+                if not q_cargo.is_active and not q_cargo.is_completed:
+                    display_message("Fisherman Finn: \"Me cargo, lost in the shipwreck! If ye could find me manifest, I'd be mighty grateful.\"")
+                    if get_input("Accept quest 'Lost Cargo'? (yes/no)", ['yes', 'no']) == 'yes':
+                        q_cargo.activate()
+                elif q_cargo.is_active:
+                    if q_cargo.complete(player):
+                        display_message("Fisherman Finn: \"Bless yer soul! Me manifest! Now I can sort out this mess. Here's a little something for yer trouble.\"")
+                    else:
+                        display_message("Fisherman Finn: \"Any luck with me manifest, eh? It's down in that sunken wreck, I reckon.\"")
+
+            elif npc == "Mountain Guide":
+                q_miner = ALL_QUESTS["mountain_rescue"]
+                if not q_miner.is_active and not q_miner.is_completed:
+                    display_message("Mountain Guide: \"A miner went missing in the northern pass. If you find him, or at least a note from him, I'd pay handsomely.\"")
+                    if get_input("Accept quest 'Mountain Rescue'? (yes/no)", ['yes', 'no']) == 'yes':
+                        q_miner.activate()
+                elif q_miner.is_active:
+                    if q_miner.complete(player):
+                        display_message("Mountain Guide: \"A note from poor old Borin... at least we know what happened. Thank you for bringing closure.\"")
+                    else:
+                        display_message("Mountain Guide: \"Still no sign of the lost miner? Be careful up there, it's treacherous.\"")
+            
+            elif npc == "Lost Miner": # NPC for the Mountain Rescue quest
+                q_miner = ALL_QUESTS["mountain_rescue"]
+                if q_miner.is_active and not q_miner.is_completed:
+                    display_message("Lost Miner: \"Oh, thank the heavens! I'm trapped! I dropped my note somewhere nearby, please take it to the guide in the south!\"")
+                    if LOST_MINER_NOTE not in player.inventory:
+                        player.inventory.append(LOST_MINER_NOTE)
+                        display_message("You received the Lost Miner's Note.")
+                else:
+                    display_message("Lost Miner: \"Just need to rest a bit... then I'll try to find my way out.\"")
+
+            elif npc == "Ancient Scholar": # NPC for Ancient Compass quest
+                q_compass = ALL_QUESTS["ancient_compass"]
+                if not q_compass.is_active and not q_compass.is_completed:
+                    display_message("Ancient Scholar: \"The legends speak of an Ancient Compass, hidden deep within these ruins. It holds immense power. Will you brave the dangers to find it?\"")
+                    if get_input("Accept quest 'The Ancient Compass'? (yes/no)", ['yes', 'no']) == 'yes':
+                        q_compass.activate()
+                elif q_compass.is_active:
+                    if q_compass.complete(player):
+                        display_message("Ancient Scholar: \"Incredible! The Ancient Compass! Its magic is palpable. You have done a great service!\"")
+                    else:
+                        display_message("Ancient Scholar: \"The compass... it must be here somewhere. Keep searching the crypts.\"")
+
+
+            press_enter_to_continue()
+            return True
+        elif action == 'shop':
+            if self.shop:
+                self.shop.enter_shop(player)
+            else:
+                display_message("There is no shop here.")
+            return True
+        return False
+
+    def check_for_encounter(self, player, game_state, ai_engine=None):
+        for enemy_type, chance in self.encounters:
+            if random.random() < chance:
+                clear_screen()
+                active_enemy = copy.deepcopy(enemy_type)
+                display_message(f"An enemy approaches in {self.name}!")
+                is_dead = start_combat(player, active_enemy, ai_engine)
+                if not is_dead and player.is_alive():
+                    # Quest specific enemy counts
+                    if active_enemy.name == GOBLIN.name:
+                        game_state['goblins_defeated'] = game_state.get('goblins_defeated', 0) + 1
+                        if game_state['goblins_defeated'] >= 3 and ALL_QUESTS["goblin_menace"].is_active:
+                            ALL_QUESTS["goblin_menace"].complete(player)
+                return not player.is_alive()
+        return False
+
+# --- EXPANDED MAP LOCATIONS ---
+oakhaven_shop = Shop("Oakhaven General Merchant", [HEALTH_POTION_M, MANA_POTION_M, IRON_HELMET, WAR_AXE, LEATHER_HELMET])
+citadel_shop = Shop("Citadel High Arcane Emporium", [RING_OF_HEALTH, AMULET_OF_MANA, AMULET_OF_STAMINA, CHAINMAIL_ARMOR, STAMINA_POTION_S])
+coastal_shop = Shop("Coastal Market", [HEALTH_POTION_S, MANA_POTION_S, SHORT_BOW, RING_OF_DEFENSE, HEALTH_POTION_M])
+mountain_shop = Shop("Mountain Outpost Supplies", [HEALTH_POTION_L, ELIXIR_OF_LIFE, RUNIC_WARHAMMER, STEEL_PLATE, TOWER_SHIELD])
+
+
+WORLD_MAP = {
+    "oakhaven_village": Location(
+        "Oakhaven Village", 
+        "A serene village surrounding a central square. The air smells of fresh bread and damp earth.", 
+        {'north': 'whispering_woods', 'east': 'old_road', 'south': 'eastern_swamps'}, 
+        npcs=["Elder Theron"], 
+        shop=oakhaven_shop
+    ),
+    "whispering_woods": Location(
+        "Whispering Woods", 
+        "Dense forest with howling wind through misty trees. Ancient, gnarled trees loom overhead.", 
+        {'south': 'oakhaven_village', 'north': 'deep_woods', 'east': 'shadow_caves'}, 
+        encounters=[(DIRE_WOLF, 0.3), (GOBLIN, 0.1)]
+    ),
+    "deep_woods": Location(
+        "Deep Whispering Woods", 
+        "Pitch dark canopy where sunlight cannot reach. Strange sounds echo from the shadows.", 
+        {'south': 'whispering_woods', 'west': 'ancient_ruins'}, 
+        encounters=[(GOBLIN, 0.4), (DIRE_WOLF, 0.2)], 
+        items=[ANCIENT_RELIC]
+    ),
+    "shadow_caves": Location(
+        "Shadow Caves", 
+        "Damp limestone cave network dripping with glowing flora. The air is cool and still.", 
+        {'west': 'whispering_woods', 'east': 'sunken_citadel'}, 
+        encounters=[(GOBLIN, 0.3), (GIANT_TOAD, 0.2)], 
+        items=[GLOWING_MUSHROOM]
+    ),
+    "old_road": Location(
+        "Old Forest Road", 
+        "Long dirt path connecting distant provinces. Wagon tracks are faintly visible.", 
+        {'west': 'oakhaven_village', 'east': 'ironstone_foothills', 'south': 'coastal_town'}, 
+        encounters=[(GOBLIN, 0.25), (BANDIT_LEADER, 0.1)]
+    ),
+    "ironstone_foothills": Location(
+        "Ironstone Foothills", 
+        "Rocky ascending terrain surrounded by jagged cliff faces. The wind picks up here.", 
+        {'west': 'old_road', 'north': 'ironstone_pass', 'east': 'mountain_pass_north'}, 
+        encounters=[(BANDIT_LEADER, 0.3), (MOUNTAIN_GOAT, 0.2)]
+    ),
+    "ironstone_pass": Location(
+        "Ironstone Mountain Pass", 
+        "Freezing mountain path with howling blizzards. The air is thin and cold.", 
+        {'south': 'ironstone_foothills', 'up': 'dragons_peak'}, 
+        encounters=[(STONE_GOLEM, 0.4), (MOUNTAIN_GOAT, 0.3)]
+    ),
+    "dragons_peak": Location(
+        "Dragon's Peak Summit", 
+        "High volcanic summit covered in ancient scorch marks. A faint smell of sulfur lingers.", 
+        {'down': 'ironstone_pass'}, 
+        encounters=[(ANCIENT_DRAGON, 0.8)]
+    ),
+    "sunken_citadel": Location(
+        "Sunken Citadel Courtyard", 
+        "Ancient flooded stone fortress radiating dark power. Water laps at crumbling walls.", 
+        {'west': 'shadow_caves'}, 
+        npcs=["Arcane Vendor"], 
+        shop=citadel_shop, 
+        encounters=[(SHADOW_CULTIST, 0.5), (SKELETAL_WARRIOR, 0.3)]
+    ),
+    # --- NEW LOCATIONS ---
+    "eastern_swamps": Location(
+        "Eastern Swamps",
+        "A murky, humid marshland. Strange plants and buzzing insects fill the air. The ground is soft and wet.",
+        {'north': 'oakhaven_village'},
+        encounters=[(GIANT_TOAD, 0.4), (DIRE_WOLF, 0.1)],
+        items=[SWAMP_HERB, SWAMP_HERB, SWAMP_HERB] # For quest
+    ),
+    "coastal_town": Location(
+        "Coastal Town of Port Eldoria",
+        "A bustling port town with the scent of salt and fish. Ships dock and depart constantly.",
+        {'north': 'old_road', 'east': 'sunken_shipwreck'}, # 'east' implies sailing to shipwreck
+        npcs=["Fisherman Finn"],
+        shop=coastal_shop
+    ),
+    "sunken_shipwreck": Location(
+        "Sunken Shipwreck",
+        "The remains of a grand ship, half-submerged in shallow waters. Barnacles cling to its rotting hull.",
+        {'west': 'coastal_town'},
+        encounters=[(GIANT_CRAB, 0.5)],
+        items=[SHIP_MANIFEST, HEALTH_POTION_S] # For quest
+    ),
+    "mountain_pass_north": Location(
+        "Northern Mountain Pass",
+        "A narrow, icy path winding through towering peaks. The wind howls relentlessly.",
+        {'west': 'ironstone_foothills', 'north': 'forgotten_crypt'},
+        encounters=[(MOUNTAIN_GOAT, 0.4), (STONE_GOLEM, 0.2)],
+        npcs=["Lost Miner"], # NPC for quest
+        items=[LOST_MINER_NOTE] # Miner drops note here
+    ),
+    "ancient_ruins": Location(
+        "Ancient Ruins",
+        "Crumbling stone structures overgrown with vines. Whispers seem to emanate from the very stones.",
+        {'east': 'deep_woods', 'north': 'forgotten_crypt'},
+        encounters=[(SKELETAL_WARRIOR, 0.4), (SHADOW_CULTIST, 0.2)],
+        npcs=["Ancient Scholar"],
+        items=[ANCIENT_RELIC] # More relics can be found
+    ),
+    "forgotten_crypt": Location(
+        "Forgotten Crypt",
+        "A dark, musty crypt beneath the ancient ruins. The air is heavy with the scent of dust and decay.",
+        {'south': 'ancient_ruins', 'west': 'mountain_pass_north'},
+        encounters=[(SKELETAL_WARRIOR, 0.6), (SHADOW_CULTIST, 0.3)],
+        items=[ANCIENT_COMPASS, MANA_POTION_M] # For quest
+    )
+}

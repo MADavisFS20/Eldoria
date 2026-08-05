@@ -1,0 +1,8 @@
+__pycache__/
+*.pyc
+savegame.pkl
+.gradle/
+build/
+core/build/
+*.iml
+.idea/
