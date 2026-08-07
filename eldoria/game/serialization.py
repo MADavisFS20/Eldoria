@@ -64,6 +64,7 @@ def item_to_dict(i: Item | None) -> dict | None:
         "has_cannons": i.has_cannons,
         "inflicts_status": i.inflicts_status.name if i.inflicts_status else None,
         "is_compounding": i.is_compounding,
+        "heal_amount": i.heal_amount,
     }
 
 
@@ -84,6 +85,7 @@ def item_from_dict(d: dict | None) -> Item | None:
         has_cannons=d.get("has_cannons", False),
         inflicts_status=StatusEffect[d["inflicts_status"]] if d.get("inflicts_status") else None,
         is_compounding=d.get("is_compounding", False),
+        heal_amount=d.get("heal_amount"),
     )
 
 

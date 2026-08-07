@@ -28,6 +28,10 @@ def test_new_game_then_command_round_trip():
 
     r = client.get(f"/api/state/{session_id}")
     assert r.status_code == 200
+    assert "map" not in r.json()
+
+    r = client.get(f"/api/map/{session_id}")
+    assert r.status_code == 200
     assert "rows" in r.json()["map"]
 
 

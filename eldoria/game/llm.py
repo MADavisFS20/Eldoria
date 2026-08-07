@@ -15,18 +15,19 @@ import time
 import requests
 
 HOST = os.environ.get("ELDORIA_LLM_HOST", "http://127.0.0.1:11434")
-MODEL = os.environ.get("ELDORIA_LLM_MODEL", "qwen2.5:0.5b")
+MODEL = os.environ.get("ELDORIA_LLM_MODEL", "qwen2.5:1.5b")
 ENABLED = os.environ.get("ELDORIA_LLM_ENABLED", "1") != "0"
 
 _CONNECT_TIMEOUT = 2.0
-_READ_TIMEOUT = 8.0
+_READ_TIMEOUT = 25.0
 _DOWN_RETRY_SECONDS = 30.0
 
 _last_failure_at: float | None = None
 
 KNOWN_VERBS = (
     "look, map, character, inventory, journal, codex, chronicle, north, south, east, west, up, down, "
-    "go <place>, enter, leave, talk <name>, train, attack <name>, take <item>, equip <item>, craft <item>, "
+    "go <place>, enter, leave, talk <name>, train, attack <name>, flee, convince, magic <spell>, item <name>, "
+    "take <item>, equip <item>, craft <item>, "
     "rest, sleep, hire, fire, shop, buy <item>, sell <item>, travel <place>, sail <place>, bank, "
     "deposit <amount>, withdraw <amount>, property, business, invest <business>, start <business>, "
     "gamble <amount>, prompt, help"
@@ -50,6 +51,13 @@ def _mark_failure() -> None:
 def _mark_success() -> None:
     global _last_failure_at
     _last_failure_at = None
+
+
+def warm_up() -> None:
+    """Best-effort model preload: Ollama loads a model into memory on first use,
+    which can take longer than a normal request's read timeout. Call this once at
+    server startup so the model is already warm before a player's first command."""
+    _generate("Reply with: ready", num_predict=5)
 
 
 def _generate(prompt: str, num_predict: int = 40) -> str | None:

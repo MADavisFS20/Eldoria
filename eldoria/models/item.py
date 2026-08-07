@@ -22,6 +22,7 @@ class ItemKind(Enum):
     TRINKET = "TRINKET"
     MATERIAL = "MATERIAL"
     BOAT = "BOAT"
+    CONSUMABLE = "CONSUMABLE"
 
 
 @dataclass(frozen=True)
@@ -40,6 +41,8 @@ class Item:
     inflicts_status: StatusEffect | None = None
     is_compounding: bool = False
     """WEAPON-only: each consecutive hit on the same target doubles the last hit's damage (capped). See commands.attack."""
+    heal_amount: int | None = None
+    """CONSUMABLE-only: health restored on use, see commands.use_item."""
 
     def __post_init__(self):
         if self.current_durability is None:

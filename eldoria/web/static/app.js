@@ -92,7 +92,6 @@
     appendLog(data.log);
     latestState = data.state;
     renderSidePanel();
-    renderMap();
     if (!panelsInitialized) {
       setupVerticalResize();
       panelsInitialized = true;
@@ -239,9 +238,20 @@
     el("side-quests").innerHTML = questsHtml;
   }
 
-  function renderMap() {
-    if (!latestState) return;
-    const grid = latestState.map;
+  let cachedMapGrid = null;
+
+  async function renderMap() {
+    if (!sessionId) return;
+    const res = await fetch(`/api/map/${sessionId}`);
+    if (!res.ok) return;
+    const data = await res.json();
+    cachedMapGrid = data.map;
+    drawMap();
+  }
+
+  function drawMap() {
+    const grid = cachedMapGrid;
+    if (!grid) return;
     const colorClass = {
       white: "style-white", yellow: "style-yellow", red: "style-red", blue: "style-blue",
       cyan: "style-cyan", plain: "style-plain", landmark: "style-landmark",
@@ -269,7 +279,10 @@
 
   // --- Side drawer (character / inventory overlay) ---------------------------
 
+  let currentSideTab = "character";
+
   function setSideSubTab(which) {
+    currentSideTab = which;
     el("side-character").style.display = which === "character" ? "block" : "none";
     el("side-inventory").style.display = which === "inventory" ? "block" : "none";
     el("side-estate").style.display = which === "estate" ? "block" : "none";
@@ -282,6 +295,7 @@
     const icons = { character: "⚔", inventory: "🎒", estate: "🏦", quests: "📜", map: "🗺" };
     el("side-tab-handle").querySelector(".tab-label").textContent = labels[which];
     el("side-tab-handle").querySelector(".tab-icon").textContent = icons[which];
+    if (which === "map") renderMap();
   }
 
   function openDrawer() {
@@ -356,7 +370,7 @@
     appendLog(data.log);
     latestState = data.state;
     renderSidePanel();
-    renderMap();
+    if (currentSideTab === "map") renderMap();
   }
 
   // --- On-screen keyboard (toggled overlay, bottom half of the screen) -------

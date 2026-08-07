@@ -41,7 +41,6 @@ def _state(session: GameSession) -> dict:
         "character": character_panel.sheet_data(session.player),
         "inventory": character_panel.inventory_data(session.player),
         "journal": commands.journal_data(session),
-        "map": map_renderer.grid(session),
         "alive": session.player.is_alive,
         "pending_prompt": session.pending_prompt,
         "location_name": room.name if room else session.current_location.name,
@@ -100,6 +99,16 @@ def state(session_id: str) -> dict:
     if session is None:
         raise HTTPException(status_code=404, detail="Unknown session")
     return _state(session)
+
+
+@app.get("/api/map/{session_id}")
+def map_state(session_id: str) -> dict:
+    """The whole-world map is ~600KB of cell data -- fetched only when the Map tab is opened,
+    not embedded in every /api/command response."""
+    session = session_store.get(session_id)
+    if session is None:
+        raise HTTPException(status_code=404, detail="Unknown session")
+    return {"map": map_renderer.grid(session)}
 
 
 _static_dir = Path(__file__).resolve().parent / "static"

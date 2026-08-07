@@ -17,7 +17,7 @@ import random
 from dataclasses import dataclass, field
 
 from eldoria.game import serialization
-from eldoria.models import GameLocation, Item, PlayerCharacter, SpawnEntry, SubRealm, SubRealmRoom, World
+from eldoria.models import GameLocation, Item, PlayerCharacter, SkillType, SpawnEntry, StatusEffect, SubRealm, SubRealmRoom, World
 
 RESPAWN_DELAY_TICKS = 40
 
@@ -26,6 +26,52 @@ RESPAWN_DELAY_TICKS = 40
 class SubRealmPosition:
     sub_realm_id: str
     room_id: str
+
+
+@dataclass
+class Combatant:
+    """One enemy's mutable overlay on top of its static SpawnEntry for the duration of a fight.
+
+    being_index matches session.current_beings()' indexing (stable across a fight since a
+    combatant only leaves that list once defeated).
+    """
+
+    being_index: int
+    name: str
+    hp: int
+    max_hp: int
+    status: StatusEffect | None = None
+    status_turns: int = 0
+
+
+@dataclass
+class CombatState:
+    """One ongoing encounter, resolved one round per 'attack'/'flee'/'convince'/'magic'/'item' command
+    so the player can act mid-fight instead of the whole thing resolving in one shot.
+
+    Engaging a HOSTILE being pulls every other HOSTILE being at the same spot into the same
+    encounter (they were already spoiling for a fight) -- provoking a non-hostile being only
+    draws that one being in. Every living combatant attacks the player each round, not just
+    whichever one is currently being targeted.
+    """
+
+    combatants: list[Combatant]
+    active_target: str
+    weapon_skill: SkillType
+    crit_threshold: int
+    tier: int
+    compound_streak: int = 0
+    round_num: int = 0
+
+    def living(self) -> list[Combatant]:
+        return [c for c in self.combatants if c.hp > 0]
+
+    def find(self, name_query: str) -> Combatant | None:
+        q = name_query.lower()
+        return next((c for c in self.living() if q in c.name.lower()), None)
+
+    def active(self) -> Combatant | None:
+        return next((c for c in self.combatants if c.name == self.active_target), None)
 
 
 @dataclass
@@ -152,6 +198,7 @@ class GameSession:
         self.last_shop_trader: str | None = None
         self.last_shop_stock: list[Item] = []
         self.pending_prompt: dict | None = None
+        self.active_combat: CombatState | None = None
 
     @property
     def current_location(self) -> GameLocation:

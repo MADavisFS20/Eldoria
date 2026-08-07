@@ -1,8 +1,12 @@
-"""Bordered ASCII viewport of the map centered on the player, plus a structured grid for the web map panel.
+"""Bordered ASCII viewport of the map centered on the player, plus a structured full-world
+grid for the web map panel.
 
-True fog of war: a tile only ever shows a symbol once the player has
-physically stood on it (session.discovered_locations) -- everything else is
-blank.
+Two different fog-of-war rules apply to two different things:
+ - Terrain (biome coloring, rivers, bridges) is visible across the whole world from the very
+   start -- it's geography, not a secret.
+ - Landmarks (cities, villages, dungeon/sky-realm portals, hazards) only appear once the player
+   has physically stood on that tile (session.discovered_locations); until then the tile shows
+   its terrain color with no symbol at all.
 """
 from __future__ import annotations
 
@@ -13,10 +17,10 @@ _HALF_WIDTH = 12
 _HALF_HEIGHT = 6
 
 _LEGEND = (
-    "Legend: @=you  C=city  v=village  D=dungeon  S=sky realm  ~=water  "
-    "==bridge  !=hazard  .=explored  (blank)=undiscovered  |  "
-    "tile color=biome (blue=sea white=tundra green=jungle tan=plains sand=desert gray=mountains)  |  "
-    "black glyphs=landmarks"
+    "Legend: @=you  C=city  v=village  D=dungeon  S=sky realm  ~=water  ==bridge  !=hazard  "
+    ".=visited  (blank glyph)=undiscovered landmark  |  "
+    "tile color=biome, visible everywhere (blue=sea white=tundra green=jungle tan=plains sand=desert gray=mountains)  |  "
+    "black glyphs=discovered landmarks"
 )
 
 _BIOME_CLASS = {
@@ -30,7 +34,11 @@ _BIOME_CLASS = {
 
 
 def _symbol_and_style(session: GameSession, x: int, y: int) -> tuple[str, str, str]:
-    """Returns (symbol, text style, biome background class)."""
+    """Returns (symbol, text style, biome background class).
+
+    Terrain (the biome background class, plus rivers/bridges) shows unconditionally. Landmark
+    glyphs (city/village/portal/hazard) and the "visited" dot only show once discovered.
+    """
     world = session.world
     here = session.current_location
     if x == here.x and y == here.y:
@@ -38,24 +46,26 @@ def _symbol_and_style(session: GameSession, x: int, y: int) -> tuple[str, str, s
     if x < 0 or y < 0 or x >= world.width or y >= world.height:
         return " ", "plain", ""
     loc = world.location_at(x, y)
-    if loc is None or loc.id not in session.discovered_locations:
+    if loc is None:
         return " ", "plain", ""
     biome_cls = _BIOME_CLASS[loc.biome]
-    if loc.portal_kind == RealmKind.DUNGEON:
-        return "D", "landmark", biome_cls
-    if loc.portal_kind == RealmKind.SKY_REALM:
-        return "S", "landmark", biome_cls
-    if loc.population_tier == PopulationTier.CITY:
-        return "C", "landmark", biome_cls
-    if loc.population_tier == PopulationTier.COUNTRYSIDE:
-        return "v", "landmark", biome_cls
-    if loc.hazard is not None:
-        return "!", "red", biome_cls
+    discovered = loc.id in session.discovered_locations
+    if discovered:
+        if loc.portal_kind == RealmKind.DUNGEON:
+            return "D", "landmark", biome_cls
+        if loc.portal_kind == RealmKind.SKY_REALM:
+            return "S", "landmark", biome_cls
+        if loc.population_tier == PopulationTier.CITY:
+            return "C", "landmark", biome_cls
+        if loc.population_tier == PopulationTier.COUNTRYSIDE:
+            return "v", "landmark", biome_cls
+        if loc.hazard is not None:
+            return "!", "red", biome_cls
     if loc.terrain == TerrainKind.BRIDGE:
         return "=", "yellow", biome_cls
     if loc.terrain == TerrainKind.WATERWAY:
         return "~", "blue", biome_cls
-    return ".", "white", biome_cls
+    return (".", "white", biome_cls) if discovered else (" ", "plain", biome_cls)
 
 
 def render(session: GameSession) -> str:
@@ -78,14 +88,14 @@ def render(session: GameSession) -> str:
 
 
 def grid(session: GameSession) -> dict:
-    """Structured cell data for the web map panel: rows of {symbol, style} cells, centered on the player."""
-    here = session.current_location
+    """Structured cell data for the web map panel: the WHOLE world, every tile -- not a viewport
+    around the player. Terrain is visible everywhere from the start; landmark symbols only
+    appear once discovered (see _symbol_and_style)."""
+    world = session.world
     rows = []
-    for dy in range(-_HALF_HEIGHT, _HALF_HEIGHT + 1):
-        y = here.y + dy
+    for y in range(world.height):
         row = []
-        for dx in range(-_HALF_WIDTH, _HALF_WIDTH + 1):
-            x = here.x + dx
+        for x in range(world.width):
             symbol, style, biome = _symbol_and_style(session, x, y)
             row.append({"symbol": symbol, "style": style, "biome": biome})
         rows.append(row)

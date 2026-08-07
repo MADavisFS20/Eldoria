@@ -14,7 +14,7 @@ from dataclasses import replace
 
 from eldoria.data import ai_companion_lore, biome_content, crafting_material_content, dialogue_content, family_content, finance_lore, home_region_content, skill_trainer_content, world_history_lore
 from eldoria.game import llm
-from eldoria.game.session import GameSession, SubRealmPosition
+from eldoria.game.session import Combatant, CombatState, GameSession, SubRealmPosition
 from eldoria.models import (
     ArtifactKind,
     Biome,
@@ -913,170 +913,437 @@ def request_bionic_upgrade(session: GameSession, log: Log, arg: str) -> None:
 
 # --- Combat -------------------------------------------------------------------
 
-def attack(session: GameSession, log: Log, arg: str) -> None:
-    if session.player.companion is not None and arg.strip() and arg.lower() in session.player.companion.name.lower():
-        log.plain("You can't attack your own companion.")
-        return
-    found = find_being(session, arg)
-    if found is None:
-        log.plain("There's nothing here by that name to fight.")
-        return
-    index, target = found
-    target_hp = target.stats.max_health
-    weapon_skill = weapon_skill_for(session.player.equipped_weapon)
-    tier = session.current_room().difficulty_tier if session.current_room() else session.current_location.difficulty_tier
-    crit_threshold = max(15, 20 - session.player.perk_rank(Perk.CRITICAL_FOCUS))
+MAX_COMBAT_ROUNDS = 50
+"""Stalemate safety net across a whole fight (many player actions), not one round."""
+SPELL_STAMINA_COST = 3
+ACTION_STAMINA_COST = 1
 
-    target_status = None
-    target_status_turns = 0
-    compound_streak = 0
-    """Consecutive-hit counter for The Banker's Reckoning -- see BANKER_RECKONING_MAX_STREAK's doc."""
 
-    room = session.current_room()
-    if target.disposition != Disposition.HOSTILE:
-        log.red(f"You raise your weapon against {target.name}! This will not go unnoticed.")
-    elif room is not None and room.is_boss_room and target.kind == SpawnKind.CREATURE:
-        log.red(dialogue_content.boss_taunt_line(target.name, session.rng))
+def _being_by_index(session: GameSession, index: int):
+    return next((b for i, b in session.current_beings() if i == index), None)
+
+
+def _resolve_defeat(session: GameSession, log: Log, combat: CombatState, combatant, being) -> None:
+    log.bold(f"You have defeated {combatant.name}!")
+    session.mark_defeated(combatant.being_index, combatant.name)
+    session.increment_quest_counter(combatant.name)
+    if combatant.name == "Ancient Flame Dragon" and home_region_content.QUEST_SLAY_THE_WYRM in session.active_home_region_quests:
+        session.active_home_region_quests.discard(home_region_content.QUEST_SLAY_THE_WYRM)
+        session.completed_side_quests.add(home_region_content.QUEST_SLAY_THE_WYRM)
+        trophy = Item(name="Dragon Scale Trophy", kind=ItemKind.TRINKET, tier=5, value=750, max_durability=1, is_legendary=True)
+        session.player = replace(session.player, inventory=session.player.inventory + (trophy,), gold=session.player.gold + 1000)
+        session.player = level_progression.apply_experience(session.player, 1000, session.rng)
+        log.bold("[QUEST COMPLETE]: Slay the Wyrm (+1000 XP, +1000g, Dragon Scale Trophy)")
+    xp = level_progression.xp_for_defeating(combat.tier, session.rng)
+    before = session.player.level
+    session.player = level_progression.apply_experience(session.player, xp, session.rng)
+    log.plain(f"You gain {xp} experience.")
+    if session.player.level > before:
+        log.bold(f"You reached level {session.player.level}!")
+    if session.player.pending_perk_choices > 0:
+        log.cyan("You have a perk choice available! Type 'perk' to choose.")
+
+    rep_delta = session.rng.randint(1, 3) if being.disposition == Disposition.HOSTILE else -20
+    session.player = replace(session.player, reputation=max(-100, min(100, session.player.reputation + rep_delta)))
+    if rep_delta < 0:
+        log.red("Word of this will spread. Your reputation suffers.")
+
+    if being.kind == SpawnKind.CREATURE and being.disposition == Disposition.HOSTILE and session.rng.randrange(100) < 30:
+        biome = session.current_sub_realm().biome if session.current_sub_realm() else session.current_location.biome
+        material = session.rng.choice(crafting_material_content.materials_for(biome))
+        new_materials = dict(session.player.materials)
+        new_materials[material.name] = new_materials.get(material.name, 0) + 1
+        session.player = replace(session.player, materials=new_materials)
+        log.yellow(f"{combatant.name} dropped: {material.name}")
+
+    realm = session.current_sub_realm()
+    if realm is not None:
+        boss_room = realm.rooms[realm.boss_room_id]
+        room = session.current_room()
+        if being in boss_room.beings and room is not None and room.is_boss_room:
+            log.bold(f"The way to {realm.quest.title}'s treasures lies open.")
+
+
+def _defeat_combatant(session: GameSession, log: Log, combat: CombatState, combatant) -> None:
+    being = _being_by_index(session, combatant.being_index)
+    was_active = combatant.name == combat.active_target
+    _resolve_defeat(session, log, combat, combatant, being)
+    combat.combatants = [c for c in combat.combatants if c is not combatant]
+    if was_active:
+        remaining = combat.living()
+        if remaining:
+            combat.active_target = remaining[0].name
+            log.dim(f"  You turn to face {combat.active_target}!")
+
+
+def _check_and_resolve(session: GameSession, log: Log, combat: CombatState, combatant) -> bool:
+    if combatant.hp > 0:
+        return False
+    _defeat_combatant(session, log, combat, combatant)
+    return True
+
+
+def _tick_statuses(session: GameSession, log: Log, combat: CombatState) -> None:
+    for combatant in list(combat.combatants):
+        if combatant.hp <= 0 or combatant.status is None:
+            continue
+        status = combatant.status
+        if status.per_turn_damage > 0:
+            combatant.hp -= status.per_turn_damage
+            log.red(f"  {combatant.name} suffers {status.per_turn_damage} {status.display_name.lower()} damage!")
+        combatant.status_turns -= 1
+        if combatant.status_turns <= 0:
+            log.dim(f"  The {status.display_name.lower()} on {combatant.name} fades.")
+            combatant.status = None
+        _check_and_resolve(session, log, combat, combatant)
+
+
+def _foe_attack(session: GameSession, log: Log, target) -> None:
+    foe_roll = sg.attack_roll_detailed(session.rng, target.stats.attack_bonus)
+    if foe_roll.is_fumble:
+        log.dim(f"  {target.name} fumbles and misses badly. (natural 1)")
+    elif sg.is_hit(foe_roll, session.player.armor_class):
+        dmg = sg.critical_damage(target.stats.damage, session.rng) if foe_roll.is_critical else target.stats.damage.roll(session.rng)
+        dmg = max(1, dmg)
+        if target.stats.magic_damage is not None:
+            dmg += target.stats.magic_damage.roll(session.rng)
+        resisted = int(dmg * session.player.race.magic_resistance_percent / 100.0)
+        dmg = max(1, dmg - resisted)
+        session.player = replace(session.player, current_health=session.player.current_health - dmg)
+        crit_note = " CRITICAL HIT!" if foe_roll.is_critical else ""
+        log.plain(f"  {target.name} hits you for {dmg} damage.{crit_note} (roll {foe_roll.total} vs your AC {session.player.armor_class})")
     else:
-        log.red(dialogue_content.hostile_line(target.name, session.rng))
+        log.dim(f"  {target.name} attacks and misses. (roll {foe_roll.total} vs your AC {session.player.armor_class})")
 
-    round_num = 0
-    while target_hp > 0 and session.player.is_alive and round_num < 30:
-        round_num += 1
-        session.player = replace(session.player, current_stamina=max(0, session.player.current_stamina - 1))
-        exhausted = session.player.is_exhausted
-        exhaustion_penalty = 2 if exhausted else 0
-        player_roll = sg.attack_roll_detailed(session.rng, session.player.attack_bonus - exhaustion_penalty, crit_threshold)
-        if exhausted and round_num == 1:
-            log.dim("  You're exhausted -- your strikes are slower and less sure.")
-        if player_roll.is_fumble:
-            log.dim("  You fumble badly and swing at nothing. (natural 1)")
-            compound_streak = 0
-        elif sg.is_hit(player_roll, target.stats.armor_class):
-            subclass = session.player.subclass
-            rage = subclass.low_health_rage_bonus if (subclass is not None and session.player.current_health * 2 < session.player.max_health) else 0
-            weapon = session.player.equipped_weapon
-            weapon_damage = weapon.damage if weapon else session.player.unarmed_damage
-            base_dmg = sg.critical_damage(weapon_damage, session.rng) if player_roll.is_critical else weapon_damage.roll(session.rng)
-            dmg = max(1, base_dmg) + rage
-            if weapon is not None and weapon.is_compounding:
-                multiplier = 2 ** min(compound_streak, BANKER_RECKONING_MAX_STREAK)
-                dmg *= multiplier
-                if compound_streak >= BANKER_RECKONING_MAX_STREAK:
-                    log.dim(f"  The Reckoning's compounding hits its ceiling at {multiplier}x -- even exponential growth runs into real-world limits eventually.")
-                elif compound_streak > 0:
-                    log.yellow(f"  The Reckoning compounds: {multiplier}x damage from {compound_streak + 1} consecutive hits.")
-                compound_streak += 1
-            target_hp -= dmg
-            rage_note = f" (rage +{rage})" if rage > 0 else ""
-            crit_note = " CRITICAL HIT!" if player_roll.is_critical else ""
-            log.plain(f"  You strike {target.name} for {dmg} damage.{rage_note}{crit_note} (roll {player_roll.total} vs AC {target.stats.armor_class})")
-            session.player = skill_progression.gain_skill_use(session.player, weapon_skill, session.rng)
-            if subclass is not None and subclass.lifesteal_percent > 0:
-                healed = max(1, int(dmg * subclass.lifesteal_percent / 100.0))
-                new_health = min(session.player.max_health, session.player.current_health + healed)
-                session.player = replace(session.player, current_health=new_health)
-                log.dim(f"  The wound feeds you -- you recover {healed} health.")
-            if weapon is not None and weapon.inflicts_status is not None:
-                effect = weapon.inflicts_status
-                if effect in target.stats.status_resistances:
-                    log.dim(f"  {target.name} resists the {effect.display_name.lower()}.")
-                else:
-                    target_status = effect
-                    target_status_turns = effect.default_turns
-                    log.red(f"  {target.name} is afflicted with {effect.display_name}!")
-        else:
-            log.dim(f"  You swing at {target.name} and miss. (roll {player_roll.total} vs AC {target.stats.armor_class})")
-            compound_streak = 0
-        if target_hp <= 0:
-            break
 
+def _enemy_turn(session: GameSession, log: Log, combat: CombatState) -> None:
+    """Every living combatant acts once -- this is what makes a multi-enemy fight actually multi-enemy."""
+    if not combat.combatants:
+        return
+    _tick_statuses(session, log, combat)
+    for combatant in list(combat.living()):
+        if not session.player.is_alive:
+            return
+        if combatant.status is not None and combatant.status.skips_turn:
+            log.cyan(f"  {combatant.name} is frozen solid and cannot act!")
+            continue
+        being = _being_by_index(session, combatant.being_index)
+        _foe_attack(session, log, being)
+
+
+def _finish_turn(session: GameSession, log: Log, combat: CombatState) -> None:
+    """Common post-action bookkeeping: clear a resolved/lost fight, or show the ongoing status line."""
+    if session.active_combat is not combat:
+        return
+    if not combat.combatants or not session.player.is_alive:
+        session.active_combat = None
+        return
+    if combat.round_num >= MAX_COMBAT_ROUNDS:
+        names = ", ".join(c.name for c in combat.living())
+        log.dim(f"Neither side can land a finishing blow -- you break apart from {names}, exhausted.")
+        session.active_combat = None
+        return
+    parts = [f"{c.name}: {max(0, c.hp)}/{c.max_hp}{' [target]' if c.name == combat.active_target else ''}" for c in combat.living()]
+    log.dim(f"  ({' | '.join(parts)} -- 'attack [name]', 'flee', 'convince', 'magic', or 'item')")
+
+
+def _run_combat_round(session: GameSession, log: Log, combat: CombatState) -> None:
+    """One player-attack exchange against the active target, then every living enemy's turn."""
+    combat.round_num += 1
+    session.player = replace(session.player, current_stamina=max(0, session.player.current_stamina - ACTION_STAMINA_COST))
+    exhausted = session.player.is_exhausted
+    exhaustion_penalty = 2 if exhausted else 0
+    if exhausted and combat.round_num == 1:
+        log.dim("  You're exhausted -- your strikes are slower and less sure.")
+
+    target = combat.active()
+    target_being = _being_by_index(session, target.being_index)
+    player_roll = sg.attack_roll_detailed(session.rng, session.player.attack_bonus - exhaustion_penalty, combat.crit_threshold)
+    if player_roll.is_fumble:
+        log.dim("  You fumble badly and swing at nothing. (natural 1)")
+        combat.compound_streak = 0
+    elif sg.is_hit(player_roll, target_being.stats.armor_class):
+        subclass = session.player.subclass
+        rage = subclass.low_health_rage_bonus if (subclass is not None and session.player.current_health * 2 < session.player.max_health) else 0
+        weapon = session.player.equipped_weapon
+        weapon_damage = weapon.damage if weapon else session.player.unarmed_damage
+        base_dmg = sg.critical_damage(weapon_damage, session.rng) if player_roll.is_critical else weapon_damage.roll(session.rng)
+        dmg = max(1, base_dmg) + rage
+        if weapon is not None and weapon.is_compounding:
+            multiplier = 2 ** min(combat.compound_streak, BANKER_RECKONING_MAX_STREAK)
+            dmg *= multiplier
+            if combat.compound_streak >= BANKER_RECKONING_MAX_STREAK:
+                log.dim(f"  The Reckoning's compounding hits its ceiling at {multiplier}x -- even exponential growth runs into real-world limits eventually.")
+            elif combat.compound_streak > 0:
+                log.yellow(f"  The Reckoning compounds: {multiplier}x damage from {combat.compound_streak + 1} consecutive hits.")
+            combat.compound_streak += 1
+        target.hp -= dmg
+        rage_note = f" (rage +{rage})" if rage > 0 else ""
+        crit_note = " CRITICAL HIT!" if player_roll.is_critical else ""
+        log.plain(f"  You strike {target.name} for {dmg} damage.{rage_note}{crit_note} (roll {player_roll.total} vs AC {target_being.stats.armor_class})")
+        session.player = skill_progression.gain_skill_use(session.player, combat.weapon_skill, session.rng)
+        if subclass is not None and subclass.lifesteal_percent > 0:
+            healed = max(1, int(dmg * subclass.lifesteal_percent / 100.0))
+            new_health = min(session.player.max_health, session.player.current_health + healed)
+            session.player = replace(session.player, current_health=new_health)
+            log.dim(f"  The wound feeds you -- you recover {healed} health.")
+        if weapon is not None and weapon.inflicts_status is not None:
+            effect = weapon.inflicts_status
+            if effect in target_being.stats.status_resistances:
+                log.dim(f"  {target.name} resists the {effect.display_name.lower()}.")
+            else:
+                target.status = effect
+                target.status_turns = effect.default_turns
+                log.red(f"  {target.name} is afflicted with {effect.display_name}!")
+    else:
+        log.dim(f"  You swing at {target.name} and miss. (roll {player_roll.total} vs AC {target_being.stats.armor_class})")
+        combat.compound_streak = 0
+
+    if not _check_and_resolve(session, log, combat, target):
         comp = session.player.companion
         if comp is not None:
             comp_roll = sg.attack_roll(session.rng, comp.attack_bonus)
-            if sg.is_hit(comp_roll, target.stats.armor_class):
+            if sg.is_hit(comp_roll, target_being.stats.armor_class):
                 comp_dmg = max(1, comp.damage.roll(session.rng))
-                target_hp -= comp_dmg
+                target.hp -= comp_dmg
                 log.cyan(f"  {comp.name} strikes {target.name} for {comp_dmg} damage.")
             else:
                 log.dim(f"  {comp.name} attacks {target.name} and misses.")
-        if target_hp <= 0:
-            break
+            _check_and_resolve(session, log, combat, target)
 
-        foe_skips_turn = False
-        if target_status is not None:
-            status = target_status
-            if status.per_turn_damage > 0:
-                target_hp -= status.per_turn_damage
-                log.red(f"  {target.name} suffers {status.per_turn_damage} {status.display_name.lower()} damage!")
-            foe_skips_turn = status.skips_turn
-            if foe_skips_turn:
-                log.cyan(f"  {target.name} is frozen solid and cannot act!")
-            target_status_turns -= 1
-            if target_status_turns <= 0:
-                log.dim(f"  The {status.display_name.lower()} on {target.name} fades.")
-                target_status = None
-        if target_hp <= 0:
-            break
+    if combat.combatants and session.player.is_alive:
+        _enemy_turn(session, log, combat)
 
-        if not foe_skips_turn:
-            foe_roll = sg.attack_roll_detailed(session.rng, target.stats.attack_bonus)
-            if foe_roll.is_fumble:
-                log.dim(f"  {target.name} fumbles and misses badly. (natural 1)")
-            elif sg.is_hit(foe_roll, session.player.armor_class):
-                dmg = sg.critical_damage(target.stats.damage, session.rng) if foe_roll.is_critical else target.stats.damage.roll(session.rng)
-                dmg = max(1, dmg)
-                if target.stats.magic_damage is not None:
-                    dmg += target.stats.magic_damage.roll(session.rng)
-                resisted = int(dmg * session.player.race.magic_resistance_percent / 100.0)
-                dmg = max(1, dmg - resisted)
-                session.player = replace(session.player, current_health=session.player.current_health - dmg)
-                crit_note = " CRITICAL HIT!" if foe_roll.is_critical else ""
-                log.plain(f"  {target.name} hits you for {dmg} damage.{crit_note} (roll {foe_roll.total} vs your AC {session.player.armor_class})")
-            else:
-                log.dim(f"  {target.name} attacks and misses. (roll {foe_roll.total} vs your AC {session.player.armor_class})")
-        if not session.player.is_alive:
+
+def attack(session: GameSession, log: Log, arg: str) -> None:
+    """Resolves exactly one round of combat per call, so the fight is a back-and-forth across
+    multiple commands rather than all at once. Engaging a hostile being pulls every other hostile
+    being at the same spot into the fight -- 'attack <name>' switches which one you're focusing."""
+    if session.player.companion is not None and arg.strip() and arg.lower() in session.player.companion.name.lower():
+        log.plain("You can't attack your own companion.")
+        return
+
+    combat = session.active_combat
+    if combat is not None:
+        if arg.strip():
+            match = combat.find(arg)
+            if match is None:
+                names = ", ".join(c.name for c in combat.living())
+                log.plain(f"You're locked in combat with: {names}. Type 'attack <name>' to focus one of them, or 'flee'.")
+                return
+            if match.name != combat.active_target:
+                combat.active_target = match.name
+                log.dim(f"  You turn your attack toward {match.name}!")
+    else:
+        found = find_being(session, arg)
+        if found is None:
+            log.plain("There's nothing here by that name to fight.")
             return
+        index, target = found
+        tier = session.current_room().difficulty_tier if session.current_room() else session.current_location.difficulty_tier
+        crit_threshold = max(15, 20 - session.player.perk_rank(Perk.CRITICAL_FOCUS))
+        if target.disposition == Disposition.HOSTILE:
+            joiners = [(i, b) for i, b in session.current_beings() if b.disposition == Disposition.HOSTILE]
+        else:
+            joiners = [(index, target)]
+        combatants = [Combatant(being_index=i, name=b.name, hp=b.stats.max_health, max_hp=b.stats.max_health) for i, b in joiners]
 
-    if target_hp <= 0:
-        log.bold(f"You have defeated {target.name}!")
-        session.mark_defeated(index, target.name)
-        session.increment_quest_counter(target.name)
-        if target.name == "Ancient Flame Dragon" and home_region_content.QUEST_SLAY_THE_WYRM in session.active_home_region_quests:
-            session.active_home_region_quests.discard(home_region_content.QUEST_SLAY_THE_WYRM)
-            session.completed_side_quests.add(home_region_content.QUEST_SLAY_THE_WYRM)
-            trophy = Item(name="Dragon Scale Trophy", kind=ItemKind.TRINKET, tier=5, value=750, max_durability=1, is_legendary=True)
-            session.player = replace(session.player, inventory=session.player.inventory + (trophy,), gold=session.player.gold + 1000)
-            session.player = level_progression.apply_experience(session.player, 1000, session.rng)
-            log.bold("[QUEST COMPLETE]: Slay the Wyrm (+1000 XP, +1000g, Dragon Scale Trophy)")
-        xp = level_progression.xp_for_defeating(tier, session.rng)
-        before = session.player.level
-        session.player = level_progression.apply_experience(session.player, xp, session.rng)
-        log.plain(f"You gain {xp} experience.")
-        if session.player.level > before:
-            log.bold(f"You reached level {session.player.level}!")
-        if session.player.pending_perk_choices > 0:
-            log.cyan("You have a perk choice available! Type 'perk' to choose.")
+        session.active_combat = CombatState(
+            combatants=combatants,
+            active_target=target.name,
+            weapon_skill=weapon_skill_for(session.player.equipped_weapon),
+            crit_threshold=crit_threshold,
+            tier=tier,
+        )
+        combat = session.active_combat
 
-        rep_delta = session.rng.randint(1, 3) if target.disposition == Disposition.HOSTILE else -20
-        session.player = replace(session.player, reputation=max(-100, min(100, session.player.reputation + rep_delta)))
-        if rep_delta < 0:
-            log.red("Word of this will spread. Your reputation suffers.")
+        room = session.current_room()
+        if target.disposition != Disposition.HOSTILE:
+            log.red(f"You raise your weapon against {target.name}! This will not go unnoticed.")
+        elif room is not None and room.is_boss_room and target.kind == SpawnKind.CREATURE:
+            log.red(dialogue_content.boss_taunt_line(target.name, session.rng))
+        else:
+            log.red(dialogue_content.hostile_line(target.name, session.rng))
+        others = [c.name for c in combatants if c.name != target.name]
+        if len(others) == 1:
+            log.red(f"{others[0]} joins the fight!")
+        elif others:
+            log.red(f"{', '.join(others)} join the fight!")
 
-        if target.kind == SpawnKind.CREATURE and target.disposition == Disposition.HOSTILE and session.rng.randrange(100) < 30:
-            biome = session.current_sub_realm().biome if session.current_sub_realm() else session.current_location.biome
-            material = session.rng.choice(crafting_material_content.materials_for(biome))
-            new_materials = dict(session.player.materials)
-            new_materials[material.name] = new_materials.get(material.name, 0) + 1
-            session.player = replace(session.player, materials=new_materials)
-            log.yellow(f"{target.name} dropped: {material.name}")
+    _run_combat_round(session, log, combat)
+    _finish_turn(session, log, combat)
 
-        realm = session.current_sub_realm()
-        if realm is not None:
-            boss_room = realm.rooms[realm.boss_room_id]
-            room = session.current_room()
-            if target in boss_room.beings and room is not None and room.is_boss_room:
-                log.bold(f"The way to {realm.quest.title}'s treasures lies open.")
+
+def flee(session: GameSession, log: Log) -> None:
+    combat = session.active_combat
+    if combat is None:
+        log.plain("You're not in a fight.")
+        return
+    living = combat.living()
+    if not living:
+        session.active_combat = None
+        log.plain("The fight is already over.")
+        return
+
+    session.player = replace(session.player, current_stamina=max(0, session.player.current_stamina - ACTION_STAMINA_COST))
+    beings = [_being_by_index(session, c.being_index) for c in living]
+    hardest_speed = max(b.stats.speed for b in beings)
+    chance = max(10, min(90, 50 + (session.player.speed - hardest_speed)))
+    if session.rng.randrange(100) < chance:
+        log.yellow("You break away from the fight and flee!")
+        session.active_combat = None
+        return
+
+    names = ", ".join(c.name for c in living)
+    verb = "cuts" if len(living) == 1 else "cut"
+    log.dim(f"You try to break away, but {names} {verb} off your escape!")
+    _enemy_turn(session, log, combat)
+    _finish_turn(session, log, combat)
+
+
+def convince(session: GameSession, log: Log) -> None:
+    """A Speech-based attempt to talk an encounter down -- only works on sentient (NPC) foes, never beasts."""
+    combat = session.active_combat
+    if combat is None:
+        log.plain("You're not fighting anyone to convince.")
+        return
+    living = combat.living()
+    if not living:
+        session.active_combat = None
+        log.plain("The fight is already over.")
+        return
+
+    beings_by_name = {c.name: _being_by_index(session, c.being_index) for c in living}
+    persuadable = [c for c in living if beings_by_name[c.name].kind == SpawnKind.NPC]
+    if not persuadable:
+        log.plain("There's no reasoning with them here -- try 'flee' instead.")
+        return
+
+    session.player = replace(session.player, current_stamina=max(0, session.player.current_stamina - ACTION_STAMINA_COST))
+    speech = session.player.skill_level(SkillType.SPEECH)
+    chance = max(5, min(85, 15 + speech - 8 * len(living)))
+    session.player = skill_progression.gain_skill_use(session.player, SkillType.SPEECH, session.rng)
+
+    if session.rng.randrange(100) < chance:
+        names = ", ".join(c.name for c in persuadable)
+        verb = "lowers" if len(persuadable) == 1 else "lower"
+        log.yellow(f"{names} {verb} their weapons and back away.")
+        combat.combatants = [c for c in combat.combatants if c not in persuadable]
+        session.player = replace(session.player, reputation=max(-100, min(100, session.player.reputation + 1)))
+        if combat.combatants and combat.active_target not in (c.name for c in combat.living()):
+            combat.active_target = combat.living()[0].name
+        _finish_turn(session, log, combat)
+        return
+
+    log.dim("Your words fall on deaf ears.")
+    _enemy_turn(session, log, combat)
+    _finish_turn(session, log, combat)
+
+
+# --- Magic (Destruction/Restoration only for now -- Alteration/Illusion/Conjuration are
+# trainable skills with no cast-able spell yet, an intentional scope cut, not an oversight) ------
+
+def cast_magic(session: GameSession, log: Log, arg: str) -> None:
+    combat = session.active_combat
+    if combat is None:
+        log.plain("You can't focus a spell outside of danger.")
+        return
+    living = combat.living()
+    if not living:
+        session.active_combat = None
+        log.plain("The fight is already over.")
+        return
+
+    known_destruction = session.player.knows_skill(SkillType.DESTRUCTION)
+    known_restoration = session.player.knows_skill(SkillType.RESTORATION)
+    a = arg.strip().lower()
+    if a in ("heal", "mend", "restore", "restoration"):
+        school = SkillType.RESTORATION if known_restoration else None
+    elif a in ("fire", "bolt", "firebolt", "destroy", "destruction") or not a:
+        school = SkillType.DESTRUCTION if known_destruction else (SkillType.RESTORATION if known_restoration and not known_destruction else None)
+    else:
+        school = None
+
+    if school is None:
+        known = [s.display_name for s in (SkillType.DESTRUCTION, SkillType.RESTORATION) if session.player.knows_skill(s)]
+        if not known:
+            log.plain("You don't know any spells -- train a magic school with a trainer first.")
+        else:
+            log.plain(f"You don't know that spell. You know: {', '.join(known)}.")
+        return
+
+    if session.player.current_stamina < SPELL_STAMINA_COST:
+        log.plain("You're too exhausted to channel a spell right now.")
+        return
+    session.player = replace(session.player, current_stamina=session.player.current_stamina - SPELL_STAMINA_COST)
+    combat.round_num += 1
+    willpower_mod = StatBlock.modifier_of(session.player.willpower)
+
+    if school == SkillType.RESTORATION:
+        level = session.player.skill_level(SkillType.RESTORATION)
+        heal_roll = DiceFormula(2, DieType.D8, willpower_mod + level // 10).roll(session.rng)
+        healed = max(1, heal_roll)
+        new_health = min(session.player.max_health, session.player.current_health + healed)
+        actually_healed = new_health - session.player.current_health
+        session.player = replace(session.player, current_health=new_health)
+        session.player = skill_progression.gain_skill_use(session.player, SkillType.RESTORATION, session.rng)
+        log.cyan(f"You channel Restoration magic and mend {actually_healed} health.")
+    else:
+        target = combat.active()
+        target_being = _being_by_index(session, target.being_index)
+        level = session.player.skill_level(SkillType.DESTRUCTION)
+        spell_roll = sg.attack_roll_detailed(session.rng, willpower_mod + level // 10, combat.crit_threshold)
+        if spell_roll.is_fumble:
+            log.dim("  Your spell fizzles. (natural 1)")
+        elif sg.is_hit(spell_roll, target_being.stats.armor_class):
+            base_dmg = DiceFormula(2, DieType.D6, willpower_mod + level // 10)
+            dmg = max(1, sg.critical_damage(base_dmg, session.rng) if spell_roll.is_critical else base_dmg.roll(session.rng))
+            target.hp -= dmg
+            crit_note = " CRITICAL HIT!" if spell_roll.is_critical else ""
+            log.cyan(f"  A bolt of flame sears {target.name} for {dmg} damage.{crit_note} (roll {spell_roll.total} vs AC {target_being.stats.armor_class})")
+            session.player = skill_progression.gain_skill_use(session.player, SkillType.DESTRUCTION, session.rng)
+            _check_and_resolve(session, log, combat, target)
+        else:
+            log.dim(f"  Your firebolt streaks past {target.name}. (roll {spell_roll.total} vs AC {target_being.stats.armor_class})")
+
+    if combat.combatants and session.player.is_alive:
+        _enemy_turn(session, log, combat)
+    _finish_turn(session, log, combat)
+
+
+# --- Consumable items (see shop_generator.healing_draught for how these enter play) -------------
+
+def use_item(session: GameSession, log: Log, arg: str) -> None:
+    if not arg.strip():
+        log.plain("Use what? (e.g. 'item healing draught')")
+        return
+    indexed = next(
+        (pair for pair in enumerate(session.player.inventory) if pair[1].kind == ItemKind.CONSUMABLE and arg.lower() in pair[1].name.lower()),
+        None,
+    )
+    if indexed is None:
+        log.plain("You don't have that.")
+        return
+    _, item = indexed
+    session.player = replace(session.player, inventory=_remove_one(session.player.inventory, item))
+
+    if item.heal_amount:
+        new_health = min(session.player.max_health, session.player.current_health + item.heal_amount)
+        actually_healed = new_health - session.player.current_health
+        session.player = replace(session.player, current_health=new_health)
+        log.yellow(f"You drink the {item.name}, recovering {actually_healed} health.")
+    else:
+        log.plain(f"You use the {item.name}, but nothing happens.")
+
+    combat = session.active_combat
+    if combat is not None:
+        living = combat.living()
+        if not living:
+            session.active_combat = None
+            return
+        combat.round_num += 1
+        _enemy_turn(session, log, combat)
+        _finish_turn(session, log, combat)
 
 
 # --- Items / equipment / crafting --------------------------------------------
@@ -2205,7 +2472,10 @@ def ride_balloon(session: GameSession, log: Log, arg: str) -> None:
 def print_help(log: Log) -> None:
     log.plain("Movement: north/n, south/s, east/e, west/w, up, down, go <exit>")
     log.plain("Look:      look/l, map/m, character/c, inventory/inv, journal, codex, chronicle, prompt")
-    log.plain("People:    talk <name>, train <name>, attack <name>")
+    log.plain("People:    talk <name>, train <name>")
+    log.plain("Combat:    attack <name> (one round per command; keeps other hostiles in the fight too),")
+    log.plain("           attack <name> again mid-fight to switch targets, flee, convince (Speech, sentient foes only),")
+    log.plain("           magic <fire/heal> (if you've trained Destruction/Restoration), item <name> (use a consumable)")
     log.plain("Items:     take <item>, equip <item>, craft <skill>")
     log.plain("Places:    enter (a dungeon/sky portal), leave (a sub-realm), travel <city>")
     log.plain("Shop:      shop, buy <#>, sell <#>")

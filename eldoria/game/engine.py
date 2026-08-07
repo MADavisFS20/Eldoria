@@ -136,6 +136,14 @@ def _dispatch(session: GameSession, log: Log, session_id: str, cmd: str, arg: st
         commands.train(session, log, arg)
     elif cmd in ("attack", "fight"):
         commands.attack(session, log, arg)
+    elif cmd in ("flee", "run"):
+        commands.flee(session, log)
+    elif cmd in ("convince", "persuade"):
+        commands.convince(session, log)
+    elif cmd in ("magic", "cast", "spell"):
+        commands.cast_magic(session, log, arg)
+    elif cmd in ("item", "use"):
+        commands.use_item(session, log, arg)
     elif cmd in ("take", "get"):
         commands.take(session, log, arg)
     elif cmd in ("equip", "wear", "wield"):

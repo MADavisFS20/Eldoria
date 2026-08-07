@@ -6,9 +6,12 @@ or it fails to come up, the game still runs, just without local-LLM assist.
 import atexit
 import socket
 import subprocess
+import threading
 import time
 
 import uvicorn
+
+from eldoria.game import llm
 
 _OLLAMA_HOST = "127.0.0.1"
 _OLLAMA_PORT = 11434
@@ -58,5 +61,8 @@ def _stop_ollama(proc: subprocess.Popen | None) -> None:
 if __name__ == "__main__":
     ollama_proc = _start_ollama()
     atexit.register(_stop_ollama, ollama_proc)
+
+    if _ollama_reachable():
+        threading.Thread(target=llm.warm_up, daemon=True).start()
 
     uvicorn.run("eldoria.web.main:app", host="127.0.0.1", port=8000, reload=True)

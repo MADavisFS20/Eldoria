@@ -18,12 +18,18 @@ _RING_NAMES = ["Simple Band", "Engraved Signet Ring", "Weathered Ring"]
 _AMULET_NAMES = ["Plain Pendant", "Carved Bone Amulet", "Silver Locket"]
 
 
+def healing_draught(tier: int) -> Item:
+    """A tier-scaled potion, restores heal_amount health on use (see commands.use_item)."""
+    heal = 10 + tier * 8
+    return Item(name="Healing Draught", kind=ItemKind.CONSUMABLE, tier=tier, value=10 + tier * 5, max_durability=1, heal_amount=heal)
+
+
 def inventory_for(trader_name: str, location_id: str, tier: int, world_seed: int) -> list[Item]:
     rng = make_random(world_seed, string_hash(trader_name), string_hash(location_id), 555)
     count = rng.randint(3, 5)
     items: list[Item] = []
     for _ in range(count):
-        roll = rng.randrange(6)
+        roll = rng.randrange(7)
         if roll in (0, 1):
             items.append(sg.weapon_item(rng.choice(_WEAPON_NAMES), tier, rng))
         elif roll in (2, 3):
@@ -33,11 +39,13 @@ def inventory_for(trader_name: str, location_id: str, tier: int, world_seed: int
                 items.append(sg.armor_item(rng.choice(_OFFHAND_NAMES), tier, rng, slot=ItemKind.OFFHAND))
             else:
                 items.append(sg.armor_item(rng.choice(_HEAD_NAMES), tier, rng, slot=ItemKind.HEAD))
-        else:
+        elif roll == 5:
             if rng.choice([True, False]):
                 items.append(sg.accessory_item(rng.choice(_RING_NAMES), tier, rng, slot=ItemKind.RING))
             else:
                 items.append(sg.accessory_item(rng.choice(_AMULET_NAMES), tier, rng, slot=ItemKind.AMULET))
+        else:
+            items.append(healing_draught(tier))
     return items
 
 
