@@ -9,7 +9,7 @@ from __future__ import annotations
 import random
 import time
 
-from eldoria.game import commands
+from eldoria.game import commands, llm
 from eldoria.game.commands import Log
 from eldoria.game.session import GameSession
 from eldoria.models import Biome, CharacterClass, PopulationTier, Race
@@ -99,22 +99,8 @@ def _maybe_autosave(session: GameSession, session_id: str) -> None:
         _last_autosave_millis[session_id] = now
 
 
-def execute_command(session: GameSession, session_id: str, raw_input: str) -> Log:
-    """One command in, one styled response log out -- the web-facing equivalent of one runGameLoop iteration."""
-    session.advance_tick()
-    log = Log()
-    commands.check_companion_expiry(session, log)
-    commands.check_property_events(session, log)
-    commands.check_business_events(session, log)
-    _maybe_autosave(session, session_id)
-
-    text = raw_input.strip()
-    if not text:
-        return log
-    parts = text.split(None, 1)
-    cmd = parts[0].lower()
-    arg = parts[1].strip() if len(parts) > 1 else ""
-
+def _dispatch(session: GameSession, log: Log, session_id: str, cmd: str, arg: str) -> bool:
+    """Runs one recognized command against the fixed verb table. Returns False (log untouched) if unrecognized."""
     if cmd in ("quit", "q"):
         log.plain(f"Farewell, {session.player.name}.")
     elif cmd in ("help", "?"):
@@ -232,7 +218,48 @@ def execute_command(session: GameSession, session_id: str, raw_input: str) -> Lo
     elif cmd == "decline":
         commands.decline_prompt(session, log, arg)
     else:
-        log.plain("Not sure what you mean. Type 'help' for commands.")
+        return False
+    return True
+
+
+def _command_context(session: GameSession) -> tuple[list[str], list[str]]:
+    room = session.current_room()
+    exits = list(room.exits.keys()) if room is not None else list(session.current_location.exits.keys())
+    being_names = [b.name for _, b in session.current_beings()]
+    return exits, being_names
+
+
+def execute_command(session: GameSession, session_id: str, raw_input: str) -> Log:
+    """One command in, one styled response log out -- the web-facing equivalent of one runGameLoop iteration."""
+    session.advance_tick()
+    log = Log()
+    commands.check_companion_expiry(session, log)
+    commands.check_property_events(session, log)
+    commands.check_business_events(session, log)
+    _maybe_autosave(session, session_id)
+
+    text = raw_input.strip()
+    if not text:
+        return log
+    parts = text.split(None, 1)
+    cmd = parts[0].lower()
+    arg = parts[1].strip() if len(parts) > 1 else ""
+
+    if not _dispatch(session, log, session_id, cmd, arg):
+        exits, being_names = _command_context(session)
+        interpreted = llm.interpret_command(text, exits, being_names)
+        handled = False
+        if interpreted:
+            i_parts = interpreted.split(None, 1)
+            i_cmd = i_parts[0].lower()
+            i_arg = i_parts[1].strip() if len(i_parts) > 1 else ""
+            probe_log = Log()
+            if _dispatch(session, probe_log, session_id, i_cmd, i_arg):
+                log.dim(f"(understood as: {interpreted})")
+                log.lines.extend(probe_log.lines)
+                handled = True
+        if not handled:
+            log.plain("Not sure what you mean. Type 'help' for commands.")
 
     if not session.player.is_alive:
         commands.handle_death(session, log, session_id)

@@ -7,7 +7,6 @@
   let latestState = null;
   let selectedRace = null;
   let selectedClass = null;
-  const stateListeners = [];
 
   // --- Character creation -------------------------------------------------
 
@@ -95,7 +94,6 @@
     renderSidePanel();
     renderMap();
     if (!panelsInitialized) {
-      setupHorizontalResize();
       setupVerticalResize();
       panelsInitialized = true;
     }
@@ -113,6 +111,26 @@
       panel.appendChild(div);
     }
     panel.scrollTop = panel.scrollHeight;
+    speakDescriptions(lines);
+  }
+
+  // --- Text-to-speech for game descriptions (Web Speech API) -----------------
+
+  let ttsEnabled = localStorage.getItem("eldoria_tts_enabled") === "1";
+
+  function updateTtsButton() {
+    el("tts-toggle").classList.toggle("active", ttsEnabled);
+  }
+
+  function speakDescriptions(lines) {
+    if (!ttsEnabled || !("speechSynthesis" in window)) return;
+    const text = lines
+      .filter((l) => l.style === "white" && !l.text.startsWith("Exits:"))
+      .map((l) => l.text)
+      .join(". ");
+    if (!text.trim()) return;
+    window.speechSynthesis.cancel();
+    window.speechSynthesis.speak(new SpeechSynthesisUtterance(text));
   }
 
   // --- Side panel (character / inventory) ------------------------------------
@@ -202,17 +220,42 @@
         }).join("")}
     `;
     el("side-estate").innerHTML = estateHtml;
+
+    const j = latestState.journal;
+    const questRow = (q) => `<div class="item-row" style="color:${q.status === "complete" ? "var(--text-dim)" : "var(--text)"}"><span>${q.title}</span><span>${q.status === "complete" ? "✓" : "•"}</span></div>`;
+    const questDesc = (text) => `<div style="color:var(--text-dim);font-size:0.75rem;padding-left:0.5rem;margin-bottom:0.3rem">${text}</div>`;
+    const questsHtml = `
+      <h2>Main Quest</h2>
+      ${questRow(j.main_quest)}
+      ${questDesc(j.main_quest.description)}
+      ${j.confront_nobles ? questRow(j.confront_nobles) + questDesc(j.confront_nobles.description) : ""}
+      ${j.home_quests.length ? `<hr class="sp-divider" /><h2 style="font-size:0.85rem">Home Region</h2>` +
+        j.home_quests.map(questRow).join("") : ""}
+      <hr class="sp-divider" />
+      <h2 style="font-size:0.85rem">Dungeons &amp; Sky Realms</h2>
+      ${j.realm_quests.length === 0 ? '<div class="stat-row"><span>(none discovered yet -- find a portal and \'enter\' it)</span></div>' :
+        j.realm_quests.map((q) => questRow(q) + questDesc(q.objective)).join("")}
+    `;
+    el("side-quests").innerHTML = questsHtml;
   }
 
   function renderMap() {
     if (!latestState) return;
     const grid = latestState.map;
-    const colorClass = { white: "style-white", yellow: "style-yellow", red: "style-red", blue: "style-blue", cyan: "style-cyan", plain: "style-plain" };
+    const colorClass = {
+      white: "style-white", yellow: "style-yellow", red: "style-red", blue: "style-blue",
+      cyan: "style-cyan", plain: "style-plain", landmark: "style-landmark",
+    };
+    const biomeClass = {
+      sea: "biome-sea", tundra: "biome-tundra", jungle: "biome-jungle",
+      plains: "biome-plains", desert: "biome-desert", mountains: "biome-mountains",
+    };
     let html = "";
     for (const row of grid.rows) {
       for (const cell of row) {
         const cls = colorClass[cell.style] || "style-plain";
-        html += `<span class="${cls}">${escapeHtml(cell.symbol)}</span>`;
+        const bcls = biomeClass[cell.biome] || "";
+        html += `<span class="${cls}${bcls ? " " + bcls : ""}">${escapeHtml(cell.symbol)}</span>`;
       }
       html += "\n";
     }
@@ -230,11 +273,13 @@
     el("side-character").style.display = which === "character" ? "block" : "none";
     el("side-inventory").style.display = which === "inventory" ? "block" : "none";
     el("side-estate").style.display = which === "estate" ? "block" : "none";
+    el("side-quests").style.display = which === "quests" ? "block" : "none";
+    el("side-map").style.display = which === "map" ? "block" : "none";
     document.querySelectorAll(".side-sub-tab").forEach((btn) => {
       btn.classList.toggle("active", btn.dataset.tab === which);
     });
-    const labels = { character: "CHARACTER", inventory: "INVENTORY", estate: "ESTATE" };
-    const icons = { character: "⚔", inventory: "🎒", estate: "🏦" };
+    const labels = { character: "CHARACTER", inventory: "INVENTORY", estate: "ESTATE", quests: "QUESTS", map: "MAP" };
+    const icons = { character: "⚔", inventory: "🎒", estate: "🏦", quests: "📜", map: "🗺" };
     el("side-tab-handle").querySelector(".tab-label").textContent = labels[which];
     el("side-tab-handle").querySelector(".tab-icon").textContent = icons[which];
   }
@@ -254,47 +299,6 @@
   // --- Resizable panels (drag handles, persisted to localStorage) -----------
 
   function clamp(v, lo, hi) { return Math.max(lo, Math.min(hi, v)); }
-
-  function setupHorizontalResize() {
-    const handle = el("h-resize-handle");
-    const logPanel = el("log-panel");
-    const contentArea = el("content-area");
-
-    const saved = parseInt(localStorage.getItem("eldoria_log_height_px") || "", 10);
-    if (!Number.isNaN(saved)) logPanel.style.flexBasis = saved + "px";
-
-    let dragging = false;
-    let startY = 0;
-    let startHeight = 0;
-
-    handle.addEventListener("pointerdown", (e) => {
-      dragging = true;
-      startY = e.clientY;
-      startHeight = logPanel.getBoundingClientRect().height;
-      handle.classList.add("dragging");
-      document.body.classList.add("resizing-h");
-      handle.setPointerCapture(e.pointerId);
-    });
-
-    handle.addEventListener("pointermove", (e) => {
-      if (!dragging) return;
-      const containerHeight = contentArea.getBoundingClientRect().height;
-      const minH = 60;
-      const maxH = containerHeight - 60 - handle.getBoundingClientRect().height;
-      const newHeight = clamp(startHeight + (e.clientY - startY), minH, maxH);
-      logPanel.style.flexBasis = newHeight + "px";
-    });
-
-    function endDrag() {
-      if (!dragging) return;
-      dragging = false;
-      handle.classList.remove("dragging");
-      document.body.classList.remove("resizing-h");
-      localStorage.setItem("eldoria_log_height_px", Math.round(logPanel.getBoundingClientRect().height));
-    }
-    handle.addEventListener("pointerup", endDrag);
-    handle.addEventListener("pointercancel", endDrag);
-  }
 
   function setupVerticalResize() {
     const handle = el("v-resize-handle");
@@ -353,28 +357,120 @@
     latestState = data.state;
     renderSidePanel();
     renderMap();
-    stateListeners.forEach((cb) => {
-      try { cb(data.log, latestState); } catch (e) { console.error(e); }
-    });
   }
 
-  // --- 3D layer hook (see eldoria/web/static/three/bridge.js) ----------------
+  // --- On-screen keyboard (toggled overlay, bottom half of the screen) -------
 
-  window.__eldoria = {
-    isGameActive: () => !!sessionId,
-    getSessionId: () => sessionId,
-    getState: () => latestState,
-    sendCommand: async (text, opts = {}) => {
-      if (!opts.silent) appendLog([{ style: "plain", text: `> ${text}` }]);
-      await sendCommand(text);
-    },
-    onStateUpdate: (cb) => stateListeners.push(cb),
-  };
+  const KB_ROWS = [
+    ["1", "2", "3", "4", "5", "6", "7", "8", "9", "0", "⌫"],
+    ["q", "w", "e", "r", "t", "y", "u", "i", "o", "p"],
+    ["a", "s", "d", "f", "g", "h", "j", "k", "l", "'"],
+    ["⇧", "z", "x", "c", "v", "b", "n", "m", ",", "."],
+  ];
+
+  let kbShiftActive = false;
+
+  function insertAtCursor(input, str) {
+    const start = input.selectionStart ?? input.value.length;
+    const end = input.selectionEnd ?? input.value.length;
+    input.value = input.value.slice(0, start) + str + input.value.slice(end);
+    const pos = start + str.length;
+    input.setSelectionRange(pos, pos);
+  }
+
+  function buildKeyboard() {
+    const kb = el("onscreen-keyboard");
+    kb.innerHTML = "";
+
+    KB_ROWS.forEach((row) => {
+      const rowEl = document.createElement("div");
+      rowEl.className = "kb-row";
+      row.forEach((label) => {
+        const btn = document.createElement("button");
+        btn.type = "button";
+        btn.className = "kb-key";
+        btn.textContent = label;
+        if (label === "⌫") btn.classList.add("kb-accent");
+        if (label === "⇧") btn.classList.add("kb-shift");
+        if (/^[a-z]$/.test(label)) btn.dataset.letter = label;
+        btn.addEventListener("click", () => {
+          const input = el("command-input");
+          if (label === "⌫") {
+            const start = input.selectionStart ?? input.value.length;
+            const end = input.selectionEnd ?? input.value.length;
+            if (start === end && start > 0) {
+              input.value = input.value.slice(0, start - 1) + input.value.slice(end);
+              input.setSelectionRange(start - 1, start - 1);
+            } else {
+              input.value = input.value.slice(0, start) + input.value.slice(end);
+              input.setSelectionRange(start, start);
+            }
+          } else if (label === "⇧") {
+            kbShiftActive = !kbShiftActive;
+            btn.classList.toggle("kb-shift-active", kbShiftActive);
+            kb.querySelectorAll(".kb-key").forEach((k) => {
+              if (k.dataset.letter) k.textContent = kbShiftActive ? k.dataset.letter.toUpperCase() : k.dataset.letter;
+            });
+          } else if (/^[a-z]$/.test(label)) {
+            insertAtCursor(input, kbShiftActive ? label.toUpperCase() : label);
+          } else {
+            insertAtCursor(input, label);
+          }
+          input.focus();
+        });
+        rowEl.appendChild(btn);
+      });
+      kb.appendChild(rowEl);
+    });
+
+    const bottomRow = document.createElement("div");
+    bottomRow.className = "kb-row";
+
+    const spaceBtn = document.createElement("button");
+    spaceBtn.type = "button";
+    spaceBtn.className = "kb-key kb-space";
+    spaceBtn.textContent = "space";
+    spaceBtn.addEventListener("click", () => {
+      const input = el("command-input");
+      insertAtCursor(input, " ");
+      input.focus();
+    });
+
+    const enterBtn = document.createElement("button");
+    enterBtn.type = "button";
+    enterBtn.className = "kb-key kb-wide kb-accent";
+    enterBtn.textContent = "enter";
+    enterBtn.addEventListener("click", () => el("command-form").requestSubmit());
+
+    bottomRow.appendChild(spaceBtn);
+    bottomRow.appendChild(enterBtn);
+    kb.appendChild(bottomRow);
+  }
+
+  function toggleKeyboard() {
+    const open = el("onscreen-keyboard").classList.toggle("hidden") === false;
+    el("keyboard-toggle").classList.toggle("active", open);
+    el("game").classList.toggle("kb-open", open);
+    const input = el("command-input");
+    input.readOnly = open;
+    input.focus();
+  }
 
   // --- Wire up --------------------------------------------------------------
 
   el("begin-btn").addEventListener("click", beginGame);
   el("continue-btn").addEventListener("click", continueGame);
+
+  buildKeyboard();
+  el("keyboard-toggle").addEventListener("click", toggleKeyboard);
+
+  updateTtsButton();
+  el("tts-toggle").addEventListener("click", () => {
+    ttsEnabled = !ttsEnabled;
+    localStorage.setItem("eldoria_tts_enabled", ttsEnabled ? "1" : "0");
+    updateTtsButton();
+    if (!ttsEnabled && "speechSynthesis" in window) window.speechSynthesis.cancel();
+  });
 
   el("side-tab-handle").addEventListener("click", toggleDrawer);
   el("side-close-btn").addEventListener("click", closeDrawer);
@@ -385,14 +481,55 @@
     });
   });
 
+  function submitCommand(text) {
+    if (!text.trim()) return;
+    appendLog([{ style: "plain", text: `> ${text}` }]);
+    sendCommand(text);
+  }
+
   el("command-form").addEventListener("submit", (e) => {
     e.preventDefault();
     const input = el("command-input");
     const text = input.value;
-    if (!text.trim()) return;
     input.value = "";
-    appendLog([{ style: "plain", text: `> ${text}` }]);
-    sendCommand(text);
+    submitCommand(text);
+  });
+
+  // --- Mobile quick-action bar (D-pad + one-tap verbs) -----------------------
+
+  document.querySelectorAll(".qa-btn[data-cmd]").forEach((btn) => {
+    btn.addEventListener("click", () => submitCommand(btn.dataset.cmd));
+  });
+
+  document.querySelectorAll(".qa-btn[data-fill]").forEach((btn) => {
+    btn.addEventListener("click", () => {
+      const input = el("command-input");
+      input.value = btn.dataset.fill;
+      input.focus();
+    });
+  });
+
+  // --- Log text size (persisted) ---------------------------------------------
+
+  function setLogFontSize(px) {
+    const clamped = clamp(px, 8, 24);
+    el("log-panel").style.fontSize = clamped + "px";
+    localStorage.setItem("eldoria_log_font_px", clamped);
+    return clamped;
+  }
+
+  (function initLogFontSize() {
+    const saved = parseInt(localStorage.getItem("eldoria_log_font_px") || "", 10);
+    setLogFontSize(Number.isNaN(saved) ? 14 : saved);
+  })();
+
+  el("text-size-up").addEventListener("click", () => {
+    const current = parseInt(getComputedStyle(el("log-panel")).fontSize, 10);
+    setLogFontSize(current + 1);
+  });
+  el("text-size-down").addEventListener("click", () => {
+    const current = parseInt(getComputedStyle(el("log-panel")).fontSize, 10);
+    setLogFontSize(current - 1);
   });
 
   loadMeta();

@@ -7,7 +7,7 @@ from fastapi import FastAPI, HTTPException
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel
 
-from eldoria.game import character_panel, engine, map_renderer
+from eldoria.game import character_panel, commands, engine, map_renderer
 from eldoria.game.commands import Log
 from eldoria.game.session import GameSession
 from eldoria.models import CharacterClass, Race
@@ -40,6 +40,7 @@ def _state(session: GameSession) -> dict:
     return {
         "character": character_panel.sheet_data(session.player),
         "inventory": character_panel.inventory_data(session.player),
+        "journal": commands.journal_data(session),
         "map": map_renderer.grid(session),
         "alive": session.player.is_alive,
         "pending_prompt": session.pending_prompt,
@@ -99,14 +100,6 @@ def state(session_id: str) -> dict:
     if session is None:
         raise HTTPException(status_code=404, detail="Unknown session")
     return _state(session)
-
-
-@app.get("/api/tiles3d/{session_id}")
-def tiles3d(session_id: str, cx: int | None = None, cy: int | None = None, radius: int = 3) -> dict:
-    session = session_store.get(session_id)
-    if session is None:
-        raise HTTPException(status_code=404, detail="Unknown session")
-    return map_renderer.tiles_3d(session, cx, cy, radius)
 
 
 _static_dir = Path(__file__).resolve().parent / "static"

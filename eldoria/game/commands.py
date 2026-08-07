@@ -13,6 +13,7 @@ import time
 from dataclasses import replace
 
 from eldoria.data import ai_companion_lore, biome_content, crafting_material_content, dialogue_content, family_content, finance_lore, home_region_content, skill_trainer_content, world_history_lore
+from eldoria.game import llm
 from eldoria.game.session import GameSession, SubRealmPosition
 from eldoria.models import (
     ArtifactKind,
@@ -614,12 +615,26 @@ def _handle_home_region_npc(session: GameSession, log: Log, being) -> bool:
 
 # --- Talk / train ------------------------------------------------------------
 
+def _find_being_and_message(session: GameSession, arg: str):
+    """Splits 'talk <name> <free text>' into the matched being and any trailing message (longest-name-first)."""
+    found = find_being(session, arg)
+    if found is not None:
+        return found, ""
+    tokens = arg.split()
+    for n in range(len(tokens) - 1, 0, -1):
+        candidate = " ".join(tokens[:n])
+        found = find_being(session, candidate)
+        if found is not None:
+            return found, " ".join(tokens[n:]).strip()
+    return None, ""
+
+
 def talk(session: GameSession, log: Log, arg: str) -> None:
     companion = session.player.companion
     if companion is not None and arg.strip() and arg.lower() in companion.name.lower():
         log.cyan(session.rng.choice(COMPANION_LINES))
         return
-    found = find_being(session, arg)
+    found, message = _find_being_and_message(session, arg)
     if found is None:
         log.plain("There's no one here by that name.")
         return
@@ -692,7 +707,16 @@ def talk(session: GameSession, log: Log, arg: str) -> None:
         return
     loc_name = (session.current_room().name if session.current_room() else session.current_location.name)
     biome = session.current_sub_realm().biome if session.current_sub_realm() else session.current_location.biome
-    log.blue(dialogue_content.civilian_line(being.name, loc_name, biome, session.rng))
+    reply = None
+    if message:
+        reply = llm.npc_reply(
+            name=being.name,
+            kind_label="creature" if being.kind == SpawnKind.CREATURE else "person",
+            disposition_label=being.disposition.name,
+            location=loc_name,
+            player_message=message,
+        )
+    log.blue(reply if reply else dialogue_content.civilian_line(being.name, loc_name, biome, session.rng))
     if ArtifactKind.TELEPATH_DEVICE in session.player.artifacts:
         log.cyan(f"You catch their surface thoughts: {dialogue_content.telepathy_line(session.rng)}")
 
@@ -1713,6 +1737,40 @@ def handle_death(session: GameSession, log: Log, session_id: str | None = None) 
     session.discover(session.home_location_id)
     log.red(f"(No save found yet.) You wake in {session.current_location.name}, having lost {lost_gold}g.")
     describe_location(session, log)
+
+
+def journal_data(session: GameSession) -> dict:
+    """Structured quest data for the web side panel's Quests tab -- mirrors print_journal's logic."""
+    main_quest = {
+        "title": "Find Your Family",
+        "description": "Stolen as a child by the Kingdom's nobles, you search Eldoria for the family they tore you from.",
+        "status": "complete" if MAIN_QUEST_ID in session.completed_quests else "active",
+    }
+
+    confront_nobles = None
+    if session.final_battle_won:
+        confront_nobles = {"title": "Confront the Nobles", "description": "The throne has answered for what it did to your family.", "status": "complete"}
+    elif session.final_battle_unlocked:
+        confront_nobles = {"title": "Confront the Nobles", "description": "Your family is safe and waiting. Type 'confront' when ready.", "status": "active"}
+
+    home_quests = [
+        {"title": home_region_content.QUEST_TITLES[qid], "status": "complete" if qid in session.completed_side_quests else "active"}
+        for qid in home_region_content.QUEST_TITLES
+        if qid in session.active_home_region_quests or qid in session.completed_side_quests
+    ]
+
+    realm_quests = []
+    for qid in session.discovered_quests:
+        realm = session.world.sub_realms[qid]
+        status = "complete" if qid in session.completed_quests else "active"
+        realm_quests.append({"title": realm.quest.title, "objective": realm.quest.objective, "status": status})
+
+    return {
+        "main_quest": main_quest,
+        "confront_nobles": confront_nobles,
+        "home_quests": home_quests,
+        "realm_quests": realm_quests,
+    }
 
 
 def print_journal(session: GameSession, log: Log) -> None:

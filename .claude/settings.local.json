@@ -24,7 +24,24 @@
       "Bash(chromium-browser *)",
       "Bash(gradle :ui:tasks --all --console=plain)",
       "Bash(gradle --stop)",
-      "Read(//data/data/com.termux/files/usr/lib/**)"
+      "Read(//data/data/com.termux/files/usr/lib/**)",
+      "Bash(python -m pytest tests/ -q)",
+      "Bash(curl -s -X POST http://127.0.0.1:8000/api/new_game -H \"Content-Type: application/json\" -d '{\"name\":\"UITest\",\"race\":\"HUMAN\",\"character_class\":\"WARRIOR\"}')",
+      "Bash(pkill -f \"python run.py\")",
+      "Bash(pkill -f \"uvicorn\")",
+      "Bash(curl -s -X POST http://127.0.0.1:8000/api/new_game -H \"Content-Type: application/json\" -d '{\"name\":\"QATest\",\"race\":\"HUMAN\",\"character_class\":\"WARRIOR\"}')",
+      "Bash(curl -s -o /dev/null -w \"index: %{http_code}\\\\n\" http://127.0.0.1:8000/)",
+      "Bash(curl -s -o /dev/null -w \"app.js: %{http_code}\\\\n\" http://127.0.0.1:8000/app.js)",
+      "Bash(curl -s -o /dev/null -w \"style.css: %{http_code}\\\\n\" http://127.0.0.1:8000/style.css)",
+      "Bash(node --check /data/data/com.termux/files/home/Eldoria/eldoria/web/static/app.js)",
+      "Bash(ollama list *)",
+      "Bash(pip show *)",
+      "Bash(nohup ollama serve)",
+      "Bash(disown)",
+      "Bash(time curl -s http://127.0.0.1:11434/api/generate -d '{\"model\":\"qwen2.5:0.5b\",\"prompt\":\"Say hello in 3 words.\",\"stream\":false}')",
+      "Bash(node --check eldoria/web/static/app.js)",
+      "Bash(curl -s -o /dev/null -w \"%{http_code}\\\\n\" http://127.0.0.1:8000/)",
+      "Bash(curl -s http://127.0.0.1:8000/api/meta)"
     ]
   }
 }

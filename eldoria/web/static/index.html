@@ -41,29 +41,22 @@
     </div>
 
     <div id="game" class="hidden">
-      <canvas id="scene3d"></canvas>
-      <button id="hud-toggle-btn" title="Toggle HUD">☰</button>
-
-      <header class="hud-el">
+      <header>
         <h1>ELDORIA</h1>
         <span class="header-hint">type 'help' for commands</span>
+        <div id="text-size-controls" title="Text size">
+          <button id="tts-toggle" type="button" aria-label="Read descriptions aloud" title="Read descriptions aloud">🔊</button>
+          <button id="text-size-down" type="button" aria-label="Smaller text">A-</button>
+          <button id="text-size-up" type="button" aria-label="Larger text">A+</button>
+        </div>
       </header>
 
-      <div id="content-area" class="hud-el">
+      <div id="content-area">
         <div id="log-panel"></div>
-
-        <div id="h-resize-handle" title="Drag to resize"><span></span></div>
-
-        <div id="map-section">
-          <div id="map-frame">
-            <div id="map-grid"></div>
-          </div>
-          <div id="map-legend"></div>
-        </div>
       </div>
 
-      <div id="side-drawer" class="hud-el">
-        <button id="side-tab-handle" title="Character &amp; Inventory">
+      <div id="side-drawer">
+        <button id="side-tab-handle" title="Character, Inventory &amp; Map">
           <span class="tab-icon">⚔</span>
           <span class="tab-label">CHARACTER</span>
         </button>
@@ -72,28 +65,54 @@
           <div id="v-resize-handle" title="Drag to resize"><span></span></div>
           <div class="side-panel-inner">
             <div class="side-panel-header">
-              <button class="side-sub-tab active" data-tab="character">Character</button>
-              <button class="side-sub-tab" data-tab="inventory">Inventory</button>
+              <button class="side-sub-tab active" data-tab="character">Char</button>
+              <button class="side-sub-tab" data-tab="inventory">Inv</button>
               <button class="side-sub-tab" data-tab="estate">Estate</button>
+              <button class="side-sub-tab" data-tab="quests">Quests</button>
+              <button class="side-sub-tab" data-tab="map">Map</button>
               <button id="side-close-btn" title="Close">×</button>
             </div>
             <div class="side-panel-body">
               <div id="side-character"></div>
               <div id="side-inventory" style="display:none"></div>
               <div id="side-estate" style="display:none"></div>
+              <div id="side-quests" style="display:none"></div>
+              <div id="side-map" style="display:none">
+                <div id="map-frame">
+                  <div id="map-grid"></div>
+                </div>
+                <div id="map-legend"></div>
+              </div>
             </div>
           </div>
         </div>
       </div>
 
-      <form id="command-form" class="hud-el" autocomplete="off">
+      <div id="quick-actions">
+        <div class="qa-dpad">
+          <button class="qa-btn qa-dir" data-cmd="north" title="North">↑</button>
+          <button class="qa-btn qa-dir" data-cmd="west" title="West">←</button>
+          <button class="qa-btn qa-dir" data-cmd="south" title="South">↓</button>
+          <button class="qa-btn qa-dir" data-cmd="east" title="East">→</button>
+        </div>
+        <div class="qa-verbs">
+          <button class="qa-btn" data-cmd="look" title="Look">👁</button>
+          <button class="qa-btn" data-cmd="rest" title="Rest">💤</button>
+          <button class="qa-btn qa-fill" data-fill="attack " title="Attack">⚔</button>
+          <button class="qa-btn qa-fill" data-fill="take " title="Take">✋</button>
+        </div>
+      </div>
+
+      <form id="command-form" autocomplete="off">
         <input type="text" id="command-input" placeholder="Type a command... (try 'help')" autofocus />
+        <button id="keyboard-toggle" type="button" aria-label="Toggle on-screen keyboard" title="On-screen keyboard">⌨</button>
         <button type="submit">Send</button>
       </form>
+
+      <div id="onscreen-keyboard" class="hidden"></div>
     </div>
 
   </div>
   <script src="/app.js"></script>
-  <script type="module" src="/three/scene.js"></script>
 </body>
 </html>

@@ -14,6 +14,7 @@
   --blue: #6ea3e0;
   --cyan: #6ecbcf;
   --green: #7fbf7f;
+  --kb-height: 37vh;
 }
 
 * { box-sizing: border-box; }
@@ -200,43 +201,15 @@ body {
   height: 100%;
   position: relative;
 }
-
-/* --- 3D exploration layer: full-viewport canvas behind the text HUD --- */
-
-#scene3d {
-  position: absolute;
-  inset: 0;
-  z-index: 0;
-  width: 100%;
-  height: 100%;
-  display: block;
+/* Reserve space above the fixed on-screen keyboard so it never covers the command input */
+#game.kb-open {
+  padding-bottom: var(--kb-height);
 }
-
-.hud-el { position: relative; z-index: 1; }
-
-#game.hud-collapsed .hud-el { display: none; }
-
-#hud-toggle-btn {
-  position: absolute;
-  top: 0.6rem;
-  right: 0.7rem;
-  z-index: 2;
-  width: 2.2rem;
-  height: 2.2rem;
-  border-radius: 6px;
-  border: 1px solid var(--border);
-  background: rgba(18, 20, 26, 0.75);
-  color: var(--accent);
-  font-size: 1rem;
-  cursor: pointer;
-}
-
-#scene3d-prompt, #scene3d-toast { user-select: none; }
 
 header {
   flex: none;
   display: flex;
-  align-items: baseline;
+  align-items: center;
   gap: 0.75rem;
   padding: 0.55rem 1rem;
   border-bottom: 1px solid var(--border);
@@ -256,7 +229,28 @@ header h1 {
   font-size: 0.72rem;
   font-style: italic;
   letter-spacing: 0.02em;
+  flex: 1;
 }
+
+#text-size-controls {
+  display: flex;
+  gap: 0.3rem;
+  flex: none;
+}
+
+#text-size-controls button {
+  background: transparent;
+  border: 1px solid var(--border);
+  color: var(--text-dim);
+  border-radius: 4px;
+  width: 1.9rem;
+  height: 1.9rem;
+  font-size: 0.72rem;
+  font-family: inherit;
+  cursor: pointer;
+  transition: color 0.15s, border-color 0.15s;
+}
+#text-size-controls button:hover { color: var(--accent); border-color: var(--accent); }
 
 @keyframes title-flicker {
   0%, 96%, 100% { text-shadow: 0 0 8px var(--accent-glow); opacity: 1; }
@@ -275,8 +269,8 @@ header h1 {
 }
 
 #log-panel {
-  flex: 0 0 55%;
-  min-height: 60px;
+  flex: 1;
+  min-height: 0;
   overflow-y: auto;
   padding: 0.9rem 1.1rem;
   font-family: "Menlo", "Consolas", monospace;
@@ -300,62 +294,8 @@ header h1 {
 .style-bold { color: var(--white); font-weight: bold; }
 .style-dim { color: var(--text-dim); font-style: italic; }
 
-#h-resize-handle {
-  flex: none;
-  height: 9px;
-  cursor: row-resize;
-  background: var(--bg-panel);
-  border-top: 1px solid var(--border-soft);
-  border-bottom: 1px solid var(--border-soft);
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  position: relative;
-  z-index: 5;
-  transition: background 0.15s;
-}
-#h-resize-handle:hover, #h-resize-handle.dragging { background: #23283a; }
-#h-resize-handle span {
-  width: 44px;
-  height: 3px;
-  border-radius: 2px;
-  background: var(--border);
-  transition: background 0.15s, box-shadow 0.15s;
-}
-#h-resize-handle:hover span, #h-resize-handle.dragging span {
-  background: var(--accent);
-  box-shadow: 0 0 8px var(--accent-glow);
-}
-
-#map-section {
-  flex: 1;
-  min-height: 60px;
-  overflow: auto;
-  background: #0d0f14;
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  flex-direction: column;
-  padding: 0.75rem;
-}
-
-#map-frame {
-  border: 1px solid var(--border-soft);
-  border-radius: 4px;
-  padding: 0.6rem;
-  background: radial-gradient(ellipse at center, #12151c, #0b0d11);
-}
-
-#map-grid {
-  font-family: "Menlo", "Consolas", monospace;
-  font-size: 1rem;
-  line-height: 1.15;
-  white-space: pre;
-}
-#map-legend { color: var(--text-dim); font-size: 0.75rem; margin-top: 0.6rem; text-align: center; }
-
 /* --- Side drawer: peeking tab always visible on the right edge; the panel
-   itself slides in over BOTH the log and map sections when opened --- */
+   itself slides in over the log when opened --- */
 
 #side-drawer {
   position: absolute;
@@ -460,20 +400,23 @@ header h1 {
   display: flex;
   align-items: center;
   border-bottom: 1px solid var(--border);
-  padding: 0.4rem 0.5rem;
-  gap: 0.3rem;
+  padding: 0.4rem 0.4rem;
+  gap: 0.2rem;
+  overflow-x: auto;
 }
 
 .side-sub-tab {
   background: transparent;
   border: 1px solid transparent;
   color: var(--text-dim);
-  padding: 0.35rem 0.7rem;
+  padding: 0.35rem 0.5rem;
   border-radius: 4px;
   cursor: pointer;
   font-family: inherit;
-  font-size: 0.8rem;
+  font-size: 0.76rem;
   letter-spacing: 0.02em;
+  white-space: nowrap;
+  flex: none;
   transition: color 0.15s, border-color 0.15s, background 0.15s;
 }
 .side-sub-tab:hover { color: var(--text); }
@@ -538,6 +481,91 @@ header h1 {
 .item-row:hover { background: rgba(212, 175, 106, 0.06); }
 .item-row .equipped-tag { color: var(--text-dim); font-size: 0.75rem; }
 
+/* --- Map tab (inside the side drawer, alongside Character/Inventory/Estate) --- */
+
+#side-map {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+}
+
+#map-frame {
+  max-width: 100%;
+  overflow-x: auto;
+  border: 1px solid var(--border-soft);
+  border-radius: 4px;
+  padding: 0.5rem;
+  background: radial-gradient(ellipse at center, #12151c, #0b0d11);
+}
+
+#map-grid {
+  font-family: "Menlo", "Consolas", monospace;
+  font-size: 0.72rem;
+  line-height: 1.15;
+  white-space: pre;
+}
+#map-legend { color: var(--text-dim); font-size: 0.7rem; margin-top: 0.6rem; text-align: center; }
+
+/* Biome tile colors -- background per terrain band, landmarks drawn as black glyphs on top */
+#map-grid span { text-shadow: 0 0 2px rgba(0, 0, 0, 0.65); }
+#map-grid .biome-sea { background-color: #2f5f8a; }
+#map-grid .biome-tundra { background-color: #dfe6ec; }
+#map-grid .biome-jungle { background-color: #2f6b3f; }
+#map-grid .biome-plains { background-color: #a68a4d; }
+#map-grid .biome-desert { background-color: #c9a856; }
+#map-grid .biome-mountains { background-color: #6b6f7a; }
+
+#map-grid .style-white { color: rgba(20, 18, 12, 0.55); text-shadow: none; }
+#map-grid .style-landmark { color: #14120c; font-weight: bold; text-shadow: 0 0 2px rgba(255, 255, 255, 0.75); }
+
+/* --- Mobile quick-action bar: D-pad + one-tap verbs, above the command input --- */
+
+#quick-actions {
+  flex: none;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 1.5rem;
+  padding: 0.5rem 1rem 0;
+  background: var(--bg-panel);
+}
+
+.qa-dpad {
+  display: grid;
+  grid-template-columns: repeat(3, 2.15rem);
+  grid-template-rows: repeat(2, 2.15rem);
+  gap: 0.25rem;
+}
+.qa-dpad .qa-dir:nth-child(1) { grid-column: 2; grid-row: 1; } /* north */
+.qa-dpad .qa-dir:nth-child(2) { grid-column: 1; grid-row: 2; } /* west */
+.qa-dpad .qa-dir:nth-child(3) { grid-column: 2; grid-row: 2; } /* south */
+.qa-dpad .qa-dir:nth-child(4) { grid-column: 3; grid-row: 2; } /* east */
+
+.qa-verbs {
+  display: grid;
+  grid-template-columns: repeat(2, 2.15rem);
+  grid-template-rows: repeat(2, 2.15rem);
+  gap: 0.25rem;
+}
+
+.qa-btn {
+  width: 2.15rem;
+  height: 2.15rem;
+  border-radius: 6px;
+  border: 1px solid var(--border);
+  background: var(--bg);
+  color: var(--text-dim);
+  font-size: 1rem;
+  line-height: 1;
+  cursor: pointer;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  transition: color 0.15s, border-color 0.15s, background 0.15s, transform 0.1s;
+}
+.qa-btn:hover { color: var(--accent); border-color: var(--accent); }
+.qa-btn:active { transform: scale(0.92); background: var(--bg-raised); }
+
 form#command-form {
   flex: none;
   display: flex;
@@ -578,10 +606,65 @@ form#command-form {
 }
 #command-form button:hover { transform: translateY(-1px); filter: brightness(1.08); }
 
-body.resizing-h, body.resizing-h * { cursor: row-resize !important; user-select: none !important; }
+#keyboard-toggle {
+  background: transparent !important;
+  color: var(--text-dim) !important;
+  border: 1px solid var(--border) !important;
+  font-weight: normal !important;
+  padding: 0.5rem 0.7rem !important;
+}
+#keyboard-toggle:hover { color: var(--accent) !important; border-color: var(--accent) !important; }
+#keyboard-toggle.active { color: var(--bg) !important; background: var(--cyan) !important; border-color: var(--cyan) !important; }
+
+#tts-toggle.active { color: var(--cyan); border-color: var(--cyan); }
+
+/* --- On-screen keyboard: toggled overlay covering roughly the bottom half of the screen --- */
+
+#onscreen-keyboard {
+  position: fixed;
+  left: 0;
+  right: 0;
+  bottom: 0;
+  height: var(--kb-height);
+  max-height: var(--kb-height);
+  z-index: 20;
+  display: flex;
+  flex-direction: column;
+  justify-content: flex-end;
+  gap: 0.35rem;
+  padding: 0.5rem 0.5rem calc(0.5rem + env(safe-area-inset-bottom, 0px));
+  background: var(--bg-panel);
+  border-top: 1px solid var(--border);
+  box-shadow: 0 -8px 24px rgba(0, 0, 0, 0.35);
+}
+#onscreen-keyboard.hidden { display: none; }
+
+.kb-row {
+  display: flex;
+  gap: 0.3rem;
+  flex: 1;
+}
+
+.kb-key {
+  flex: 1;
+  min-width: 0;
+  background: var(--bg-raised);
+  border: 1px solid var(--border);
+  border-radius: 5px;
+  color: var(--text);
+  font-family: inherit;
+  font-size: 0.85rem;
+  cursor: pointer;
+  transition: filter 0.1s, transform 0.05s;
+}
+.kb-key:active { filter: brightness(1.3); transform: translateY(1px); }
+.kb-key.kb-wide { flex: 1.7; }
+.kb-key.kb-space { flex: 6; }
+.kb-key.kb-accent { background: var(--accent); color: #14120c; border-color: var(--accent); font-weight: bold; }
+.kb-key.kb-shift.kb-shift-active { background: var(--cyan); color: var(--bg); border-color: var(--cyan); }
+
 body.resizing-v, body.resizing-v * { cursor: col-resize !important; user-select: none !important; }
 
 @media (max-width: 720px) {
   #side-panel-content { width: min(var(--drawer-width, 320px), 88vw); }
-  #log-panel { flex-basis: 50% !important; }
 }
